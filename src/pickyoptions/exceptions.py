@@ -1,11 +1,6 @@
-from pickyoptions.lib.utils import ensure_iterable
-
-
 class PickyOptionsError(Exception):
     """
     Base class for all pickyoptions exceptions.
-
-    Exposable by public API.
     """
     default_message = "There was an error."
 
@@ -38,7 +33,7 @@ class PickyOptionsError(Exception):
     def message(self):
         bare_message = self._inject_message_parameters(self.bare_message)
         if hasattr(self, "identifier"):
-            return "%s: %s" % (self.identifier, bare_message)
+            return "\n%s: %s" % (self.identifier, bare_message)
         return bare_message
 
     def __str__(self):
@@ -84,8 +79,8 @@ class FieldParameterizedError(PickyOptionsError):
         if self.field is None:
             return super(FieldParameterizedError, self).bare_message
         elif self._message is not None:
-            return "{field} - %s" % self._message
-        return "{field}"
+            return "(field = {field}) - %s" % self._message
+        return "(field = {field})"
 
 
 class ValueParameterizedError(FieldParameterizedError):
@@ -117,66 +112,3 @@ class ValueParameterizedError(FieldParameterizedError):
             if self._message is not None:
                 return "{field} = {value} - %s" % self._message
             return "{field} = {value}"
-
-
-class InstanceOfError(ValueParameterizedError):
-    """
-    Raised when an option is not of the right type.
-    """
-    def __init__(self, param=None, types=None):
-        types = ensure_iterable(types)
-        super(InstanceOfError, self).__init__(
-            param=param,
-            message="Must be an instance of %s." % types if types else None
-        )
-
-
-class OptionError(FieldParameterizedError, PickyOptionsUserError):
-    """
-    Abstract base class for all exceptions that are raised in reference to a specific
-    configured option.
-    """
-    pass
-
-
-class OptionConfigurationError(FieldParameterizedError, PickyOptionsConfigurationError):
-    """
-    Abstract base class for all exceptions that are raised in reference to the configuration
-    of a specific option.
-
-    Exposable by public API.
-    """
-    pass
-
-
-class OptionUnrecognizedError(OptionError):
-    """
-    Raised when an option is provided but not recognized.
-    """
-    identifier = "Unrecognized Option"
-    default_message = "The option {field} not a recognized option."
-
-
-class OptionInvalidError(ValueParameterizedError, OptionError):
-    """
-    Raised when an option is invalid.
-
-    Exposable by public API.
-    """
-    default_message = "The option {field} is invalid."
-    identifier = "Invalid Option"
-
-
-class OptionInstanceOfError(InstanceOfError, OptionInvalidError):
-    pass
-
-
-class OptionRequiredError(OptionInvalidError):
-    """
-    Raised when an option is required but not specified.
-    """
-    default_message = "The option {field} is required."
-
-
-class OptionConfigurationInstanceOfError(InstanceOfError, OptionConfigurationError):
-    pass

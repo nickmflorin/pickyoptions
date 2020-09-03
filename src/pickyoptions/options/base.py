@@ -7,15 +7,17 @@ import sys
 
 from src.lib.utils import check_num_function_arguments
 
-from .exceptions import OptionUnrecognizedError
+from ..option.exceptions import OptionUnrecognizedError, OptionInvalidError
+from .exceptions import OptionsConfigurationError, OptionsInvalidError
 
 
 logger = logging.getLogger("pickyoptions")
 
 
 class Options(object):
-    def __init__(self, *args, validate=None):
+    def __init__(self, *args, strict=True, validate=None, post_process=None):
         self._validate = validate
+        self._post_process = post_process
 
         # Keeps track of the options that were set on initialization so the state of the
         # `obj:Options` instance can be restored after overrides.
@@ -26,6 +28,12 @@ class Options(object):
         # all the options have been set.
         self._settings_options = False
         self._options = list(*args)
+        self._strict = strict
+
+        # Validate the configuration of the overall `obj:Options` instance.  The individual
+        # `obj:Option` instances will have their configurations validated independently on
+        # initialization.
+        self._validate_configuration()
 
     def __call__(self, *args, **kwargs):
         # Set the options provided on initialization and run the post processing routines and
@@ -112,8 +120,15 @@ class Options(object):
                     option.post_process(value_to_set, self)
 
     @property
+    def options(self):
+        # TODO: We have to create a setter for this that will prune the values already provided
+        # if the options are changed, or a setter that will clear the option values if this
+        # changes.
+        return self._options
+
+    @property
     def option_fields(self):
-        return [opt.field for opt in self._options]
+        return [opt.field for opt in self.options]
 
     def option(self, k):
         """
@@ -124,27 +139,24 @@ class Options(object):
         except IndexError:
             raise OptionUnrecognizedError(k)
 
-    def _validate_configuration(self):
+    def raise_invalid_option(self, field, **kwargs):
         """
-        Validates the configuration of the `obj:Options` instance.
-        """
-        if self._validate is not None:
-            if (not six.callable(self._validate)
-                    or not check_num_function_arguments(self._validate, 1)):
-                raise OptionConfigurationError(
-                    param='validate',
-                    message=(
-                        "Must be a callable that takes the options instance as it's first and "
-                        "only argument."
-                    )
-                )
-
-    def raise_invalid(self, field, message=None):
-        """
-        Raises an OptionInvalidError for the option associated with the provided field.
+        Raises an OptionInvalidError (or an extension) for the `obj:Option` associated with
+        the provided field.
         """
         option = self.option(field)
-        option.raise_invalid(message=message)
+        option.raise_invalid(**kwargs)
+
+    def raise_invalid(self, *args, **kwargs):
+        """
+        Raises an OptionsInvalidError (or an extension) for the overall `obj:Options`.
+        """
+        raise OptionsInvalidError(*args, **kwargs)
+
+    def _handle_exception(self, e, level=logging.ERROR):
+        if self.strict:
+            raise e
+        logger.log(level, "%s" % e)
 
     @classmethod
     def display(self):
@@ -155,19 +167,69 @@ class Options(object):
 
     def validate(self):
         """
-        Validates the overall `obj:Options` instance after the options have been initialized,
-        configured or overidden.  Unlike the individual `obj:Option` instance validation routines,
-        this has a chance to perform validation after all of the options have been set on the
-        `obj:Options` instance.
+        Validates the overall `obj:Options` instance, based on the provided `validate` argument
+        on initialization, after the options have been initialized, configured or overidden.
+
+        Unlike the individual `obj:Option` validation routines, this has a chance to perform
+        validation after all of the individual `obj:Option`(s) have been set on the `obj:Options`.
+
+        The provided `validate` method must be a callable that takes the `obj:Options` as it's
+        first and only argument.  To indicate that the `obj:Options` as a whole are invalid,
+        it can either raise `obj:OptionsInvalidError`, `obj:OptionInvalidError`, call the
+        `raise_invalid` method on the `obj:Options` or one of the children `obj:Option`(s) or
+        it can return a string message.  If the `obj:Options` are valid, it must return `None`.
         """
         if self._validate is not None:
-            self._validate(self)
+            # In the case that the options are invalid, validation method either returns a
+            # string method or raises one of OptionInvalidError or OptionsInvalidError (or an
+            # extension of).
+            try:
+                result = self._validate(self)
+            except Exception as e:
+                if isinstance(e, (OptionsInvalidError, OptionInvalidError)):
+                    six.reraise(*sys.exc_info())
+                else:
+                    exc = OptionsConfigurationError(
+                        field='validate',
+                        message=(
+                            "If raising an exception to indicate that the options are invalid, "
+                            "the exception must be an instance of OptionsInvalidError or "
+                            "OptionInvalidError.  It is recommended to use the `raise_invalid` "
+                            "method on the options instance or on the specific option."
+                        )
+                    )
+                    self._handle_exception(exc)
+            else:
+                if result is not None:
+                    if not isinstance(result, six.string_types):
+                        exc = OptionsConfigurationError(
+                            field='validate',
+                            message=(
+                                "The option validate method must return a string error "
+                                "message, raise an instance of OptionInvalidError or raise an "
+                                "instance of OptionsInvalidError in the case that the value or "
+                                "values are invalid.  If the value is valid, it must return None."
+                            )
+                        )
+                        self._handle_exception(exc)
+                    else:
+                        self.raise_invalid(message=result)
 
     def post_process(self):
         """
-        Performs the post-processing routines associated with all of the `obj:Option`(s) after
-        the options have been initialized, configured or overridden.
+        Performs the post-processing routines associated with the overall `obj:Options` and
+        all of the individual `obj:Option`(s) after the options have been initialized, configured
+        or overridden.
+
+        The `post_process` method of the overall `obj:Options` must be a callable that takes the
+        `obj:Options` instance as it's only argument.  The individual `obj:Option` `post_process`
+        methods must be callables that take the set value as it's first argument and the
+        overall `obj:Options` instance as it's second argument.
         """
+        if self._post_process is not None:
+            self._post_process(self)
+
+        # Post process the individual options that make up the options instance.
         for opt in self.__options__:
             if opt.post_process:
                 opt.post_process(getattr(self, opt.field), self)
@@ -232,6 +294,32 @@ class Options(object):
             return result
 
         return inner
+
+    def _validate_configuration(self):
+        """
+        Validates the configuration of the `obj:Options` instance.
+        """
+        if self._validate is not None:
+            if (not six.callable(self._validate)
+                    or not check_num_function_arguments(self._validate, 1)):
+                raise OptionsConfigurationError(
+                    param='validate',
+                    message=(
+                        "Must be a callable that takes the options instance as it's first and "
+                        "only argument."
+                    )
+                )
+
+        if self._post_process is not None:
+            if (not six.callable(self._post_processv)
+                    or not check_num_function_arguments(self._post_process, 1)):
+                raise OptionsConfigurationError(
+                    param='post_process',
+                    message=(
+                        "Must be a callable that takes the options instance as it's first and "
+                        "only argument."
+                    )
+                )
 
 
 options = Options()

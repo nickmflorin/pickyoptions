@@ -4,9 +4,8 @@ import sys
 
 from src.lib.utils import check_num_function_arguments
 
-from pickyoptions.exceptions import (
-    OptionInvalidError, OptionConfigurationInstanceOfError, OptionConfigurationError,
-    OptionRequiredError, OptionInstanceOfError)
+from .exceptions import (OptionInvalidError, OptionConfigurationError, OptionRequiredError,
+    OptionInstanceOfError)
 
 
 class Option(object):
@@ -15,6 +14,7 @@ class Option(object):
         field,
         default=None,
         validate=None,
+        validate_together=None,
         required=False,
         enforce_type=None,
         normalize=None,
@@ -36,6 +36,7 @@ class Option(object):
             self.merge_on_update = merge_on_update
 
             self._validate = validate
+            self._validate_together = validate_together
             self._normalize = normalize
             self._post_process = post_process
             self._display = display
@@ -54,66 +55,6 @@ class Option(object):
         finally:
             self._configuring_the_option = False
             self._post_configuration()
-
-    def _validate_configuration(self):
-        if not isinstance(self.field, six.string_types):
-            raise OptionConfigurationInstanceOfError(param="field", types=str)
-
-        if self.default is not None and self.type is not None:
-            if not isinstance(self.default, self.type):
-                raise OptionConfigurationError(
-                    param='normalize',
-                    message=(
-                        "If enforcing that the option be of a certain type, the default value "
-                        "must also be of that type."
-                    )
-                )
-
-        if self._normalize is not None:
-            if (not six.callable(self._normalize)
-                    or not check_num_function_arguments(self._normalize, 3)):
-                raise OptionConfigurationError(
-                    param='normalize',
-                    message=(
-                        "Must be a callable that takes the option value as it's first "
-                        "argument, the option as it's second argument and the set options as "
-                        "it's third argument."
-                    )
-                )
-
-        if self._post_process is not None:
-            if (not six.callable(self._post_process)
-                    or not check_num_function_arguments(self._post_process, 3)):
-                raise OptionConfigurationError(
-                    param='post_process',
-                    message=(
-                        "Must be a callable that takes the option value as it's first "
-                        "argument, the option as it's second argument and the set options as "
-                        "it's third argument."
-                    )
-                )
-
-        if self._validate is not None:
-            if (not six.callable(self._validate)
-                    or not check_num_function_arguments(self._validate, 2)):
-                raise OptionConfigurationError(
-                    param='validate',
-                    message=(
-                        "Must be a callable that takes the option value as it's first "
-                        "argument and the option instance as it's second argument."
-                    )
-                )
-
-        if self._display is not None:
-            if (not six.callable(self._display)
-                    or not check_num_function_arguments(self._display, 1)):
-                raise OptionConfigurationError(
-                    param='display',
-                    message=(
-                        "Must be a callable that takes the option instance as it's first "
-                        "and only argument."
-                    )
-                )
 
     def __setattr__(self, k, v):
         try:
@@ -152,7 +93,19 @@ class Option(object):
             self._post_process(value, self, options)
         return value
 
+    def validate_together(self, value, options):
+        """
+        Validates the `obj:Option` instance after all options have been set on the overall
+        combined `obj:Options` instance.
+        """
+        if self._validate_together is not None:
+            self._validate_together(value, self, options)
+
     def validate(self, value):
+        """
+        Validates the `obj:Option` instance when it's corresponding value is being set on the
+        `obj:Options`.
+        """
         if value is None:
             if self.required and not self.default:
                 self.raise_invalid(cls=OptionRequiredError)
@@ -170,7 +123,7 @@ class Option(object):
                         six.reraise(*sys.exc_info())
                     else:
                         raise OptionConfigurationError(
-                            param='validate',
+                            field='validate',
                             message=(
                                 "If raising an exception to indicate that the option is invalid, "
                                 "the exception must be an instance of OptionInvalidError.  It is "
@@ -181,7 +134,7 @@ class Option(object):
                     if result is not None:
                         if not isinstance(result, six.string_types):
                             raise OptionConfigurationError(
-                                param='validate',
+                                field='validate',
                                 message=(
                                     "The option validate method must return a string error "
                                     "message or raise an instance of OptionInvalidError in the "
@@ -190,3 +143,83 @@ class Option(object):
                                 )
                             )
                         self.raise_invalid(value=value, message=result)
+
+    def _validate_configuration(self):
+        """
+        Validates the overall `obj:Option` instance configuration.  This is not to be confused
+        with validation of the `obj:Option` instance that occurs when user defined values are
+        supplied.
+        """
+        if not isinstance(self.field, six.string_types):
+            raise OptionConfigurationError(
+                field="field",
+                message="Must be of type %s." % type(str)
+            )
+
+        if self.default is not None and self.type is not None:
+            if not isinstance(self.default, self.type):
+                raise OptionConfigurationError(
+                    field='normalize',
+                    message=(
+                        "If enforcing that the option be of a certain type, the default value "
+                        "must also be of that type."
+                    )
+                )
+
+        if self._normalize is not None:
+            if (not six.callable(self._normalize)
+                    or not check_num_function_arguments(self._normalize, 3)):
+                raise OptionConfigurationError(
+                    field='normalize',
+                    message=(
+                        "Must be a callable that takes the option value as it's first "
+                        "argument, the option instance as it's second argument and the overall "
+                        "combined options instance as it's third argument."
+                    )
+                )
+
+        if self._post_process is not None:
+            if (not six.callable(self._post_process)
+                    or not check_num_function_arguments(self._post_process, 3)):
+                raise OptionConfigurationError(
+                    field='post_process',
+                    message=(
+                        "Must be a callable that takes the option value as it's first "
+                        "argument, the option instance as it's second argument and the overall "
+                        "combined options instance as it's third argument."
+                    )
+                )
+
+        if self._validate is not None:
+            if (not six.callable(self._validate)
+                    or not check_num_function_arguments(self._validate, 2)):
+                raise OptionConfigurationError(
+                    field='validate',
+                    message=(
+                        "Must be a callable that takes the option value as it's first "
+                        "argument and the option instance as it's second argument."
+                    )
+                )
+
+        if self._validate_together is not None:
+            if (not six.callable(self._validate_together)
+                    or not check_num_function_arguments(self._validate_together, 3)):
+                raise OptionConfigurationError(
+                    field='validate_together',
+                    message=(
+                        "Must be a callable that takes the option value as it's first "
+                        "argument, the option instance as it's second argument and the overall "
+                        "combined options instance as it's third argument."
+                    )
+                )
+
+        if self._display is not None:
+            if (not six.callable(self._display)
+                    or not check_num_function_arguments(self._display, 1)):
+                raise OptionConfigurationError(
+                    field='display',
+                    message=(
+                        "Must be a callable that takes the option instance as it's first "
+                        "and only argument."
+                    )
+                )
