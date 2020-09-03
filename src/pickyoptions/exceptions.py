@@ -4,6 +4,8 @@ from pickyoptions.lib.utils import ensure_iterable
 class PickyOptionsError(Exception):
     """
     Base class for all pickyoptions exceptions.
+
+    Exposable by public API.
     """
     default_message = "There was an error."
 
@@ -46,10 +48,9 @@ class PickyOptionsError(Exception):
         return self.message
 
 
-class PickyOptionsUsageError(PickyOptionsError):
+class PickyOptionsUserError(PickyOptionsError):
     """
-    Base class for exceptions that are raised due to package external users, not internal
-    configuration errors.
+    Base class for exceptions that are raised due to user supplied options.
     """
     pass
 
@@ -130,7 +131,7 @@ class InstanceOfError(ValueParameterizedError):
         )
 
 
-class OptionError(FieldParameterizedError, PickyOptionsUsageError):
+class OptionError(FieldParameterizedError, PickyOptionsUserError):
     """
     Abstract base class for all exceptions that are raised in reference to a specific
     configured option.
@@ -142,6 +143,8 @@ class OptionConfigurationError(FieldParameterizedError, PickyOptionsConfiguratio
     """
     Abstract base class for all exceptions that are raised in reference to the configuration
     of a specific option.
+
+    Exposable by public API.
     """
     pass
 
@@ -157,6 +160,8 @@ class OptionUnrecognizedError(OptionError):
 class OptionInvalidError(ValueParameterizedError, OptionError):
     """
     Raised when an option is invalid.
+
+    Exposable by public API.
     """
     default_message = "The option {field} is invalid."
     identifier = "Invalid Option"

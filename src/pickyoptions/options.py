@@ -2,7 +2,10 @@ from copy import deepcopy
 import contextlib
 import functools
 import logging
+import six
 import sys
+
+from src.lib.utils import check_num_function_arguments
 
 from .exceptions import OptionUnrecognizedError
 
@@ -11,7 +14,9 @@ logger = logging.getLogger("pickyoptions")
 
 
 class Options(object):
-    def __init__(self, *args):
+    def __init__(self, *args, validate=None):
+        self._validate = validate
+
         # Keeps track of the options that were set on initialization so the state of the
         # `obj:Options` instance can be restored after overrides.
         self._originally_set_options = {}
@@ -86,22 +91,21 @@ class Options(object):
 
             # TODO: Should we only do this if the option is defaulted?  We might want to override
             # user specific options.
-
-            # TODO: For the stylesheet case, we are normalizing it to a string when it is set.  We should probably
-            # keep storing this as a dict, and just convert it to a string when we need it.
             if option.mergable:
                 current_value = getattr(self, option.field, None)
-                if current_value is not None and isinstance(value_to_set, dict) and isinstance(current_value, dict):
+                if (
+                    current_value is not None
+                    and isinstance(value_to_set, dict)
+                    and isinstance(current_value, dict)
+                ):
                     current_value = deepcopy(current_value)
                     current_value.update(value_to_set)
                     value_to_set = deepcopy(current_value)
 
             super(Options, self).__setattr__(option.field, value_to_set)
 
-            # Validate the `obj:Options` as a whole if all of the options are set.
-            # Do post process as well.
-            # Note that this will only happen if a specific option on the Options instance if set, since
-            # it otherwise waits for all options to be set before performing these operations.
+            # If all the options have been set, validate the `obj:Options` instance as a whole and
+            # perform the post processing routines on the individual options as well.
             if not self._settings_options:
                 self.validate()
                 if option.post_process:
@@ -120,6 +124,21 @@ class Options(object):
         except IndexError:
             raise OptionUnrecognizedError(k)
 
+    def _validate_configuration(self):
+        """
+        Validates the configuration of the `obj:Options` instance.
+        """
+        if self._validate is not None:
+            if (not six.callable(self._validate)
+                    or not check_num_function_arguments(self._validate, 1)):
+                raise OptionConfigurationError(
+                    param='validate',
+                    message=(
+                        "Must be a callable that takes the options instance as it's first and "
+                        "only argument."
+                    )
+                )
+
     def raise_invalid(self, field, message=None):
         """
         Raises an OptionInvalidError for the option associated with the provided field.
@@ -136,16 +155,18 @@ class Options(object):
 
     def validate(self):
         """
-        Validates the overall `obj:Options` instance after the options have been initialized, configured or
-        overidden.  Unlike the individual `obj:Option` instance validation routines, this has a chance to perform
-        validation after all of the options have been set on the `obj:Options` instance.
+        Validates the overall `obj:Options` instance after the options have been initialized,
+        configured or overidden.  Unlike the individual `obj:Option` instance validation routines,
+        this has a chance to perform validation after all of the options have been set on the
+        `obj:Options` instance.
         """
-        pass
+        if self._validate is not None:
+            self._validate(self)
 
     def post_process(self):
         """
-        Performs the post-processing routines associated with all of the `obj:Option`(s) after the options have
-        been initialized, configured or overridden.
+        Performs the post-processing routines associated with all of the `obj:Option`(s) after
+        the options have been initialized, configured or overridden.
         """
         for opt in self.__options__:
             if opt.post_process:
@@ -169,25 +190,26 @@ class Options(object):
         with self.settings_options():
             for opt in self.__options__:
                 if opt.field in self._originally_set_options:
-                    super(Options, self).__setattr__(opt.field, self._originally_set_options[opt.field])
+                    super(Options, self).__setattr__(
+                        opt.field, self._originally_set_options[opt.field])
                 else:
                     super(Options, self).__setattr__(opt.field, opt.default)
 
     def configure(self, *args, **kwargs):
         """
-        Configures the `obj:Options` instance by resetting to it's original state before any overrides were applied
-        and applying a new set of overrides.
+        Configures the `obj:Options` instance by resetting to it's original state before any
+        overrides were applied and applying a new set of overrides.
         """
-        # Note that this will call the validation and post processing routines in between the reset and override,
-        # which is not ideal but there is likely not a way around that.
+        # Note that this will call the validation and post processing routines in between the
+        # reset and override, which is not ideal but there is likely not a way around that.
         self.reset()
         self.override(*args, **kwargs)
 
     def local_override(self, func):
         """
-        Decorator for functions that allows the global options to be temporarily overridden while inside the context
-        of the decorated method.  The decorated method can be provided additional keyword arguments to specify the
-        values of the options to be overridden.
+        Decorator for functions that allows the global options to be temporarily overridden while
+        inside the context of the decorated method.  The decorated method can be provided
+        additional keyword arguments to specify the values of the options to be overridden.
         """
         @functools.wraps(func)
         def inner(*args, **kwargs):

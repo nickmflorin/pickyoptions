@@ -1,14 +1,20 @@
 [tool.poetry]
-name = "pickyoptions2"
+name = "pickyoptions"
 version = "0.1.0"
-description = ""
+description = "User defined options for Python packages."
 authors = ["nickmflorin <nickmflorin@gmail.com>"]
+packages = [
+    { include = "pickyoptions", from = "src" }
+]
+include = ["src/*.py"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
+ipdb = "^0.13.3"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
+ipdb = "0.13.3"
 
 [build-system]
 requires = ["poetry>=0.12"]

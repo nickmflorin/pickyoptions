@@ -1,4 +1,4 @@
-from pickyoptions2 import __version__
+from pickyoptions import __version__
 
 
 def test_version():

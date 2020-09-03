@@ -14,7 +14,7 @@ class Option(object):
         self,
         field,
         default=None,
-        validator=None,
+        validate=None,
         required=False,
         enforce_type=None,
         normalize=None,
@@ -35,7 +35,7 @@ class Option(object):
             self.help_text = help_text
             self.merge_on_update = merge_on_update
 
-            self._validator = validator
+            self._validate = validate
             self._normalize = normalize
             self._post_process = post_process
             self._display = display
@@ -95,13 +95,12 @@ class Option(object):
 
         if self._validate is not None:
             if (not six.callable(self._validate)
-                    or not check_num_function_arguments(self._validate, 3)):
+                    or not check_num_function_arguments(self._validate, 2)):
                 raise OptionConfigurationError(
                     param='validate',
                     message=(
                         "Must be a callable that takes the option value as it's first "
-                        "argument, the option as it's second argument and the set options as "
-                        "it's third argument."
+                        "argument and the option instance as it's second argument."
                     )
                 )
 
@@ -132,9 +131,10 @@ class Option(object):
             help=self.help_text
         )
 
-    def raise_invalid(self, cls=None, **kwargs):
-        cls = cls or OptionInvalidError
-        raise cls(param=self.field, **kwargs)
+    def raise_invalid(self, *args, **kwargs):
+        cls = kwargs.pop('cls', OptionInvalidError)
+        kwargs['param'] = self.field
+        raise cls(*args, **kwargs)
 
     @property
     def display(self):
@@ -152,7 +152,7 @@ class Option(object):
             self._post_process(value, self, options)
         return value
 
-    def validate(self, value, options):
+    def validate(self, value):
         if value is None:
             if self.required and not self.default:
                 self.raise_invalid(cls=OptionRequiredError)
@@ -164,7 +164,7 @@ class Option(object):
                 # In the case that the option is invalid, validation method either returns a
                 # string method or raises an OptionInvalidError (or an extension).
                 try:
-                    result = self._validate(value, self, options)
+                    result = self._validate(value, self)
                 except Exception as e:
                     if isinstance(e, OptionInvalidError):
                         six.reraise(*sys.exc_info())
@@ -173,7 +173,8 @@ class Option(object):
                             param='validate',
                             message=(
                                 "If raising an exception to indicate that the option is invalid, "
-                                "the exception must be an instance of OptionInvalidError."
+                                "the exception must be an instance of OptionInvalidError.  It is "
+                                "recommended to use the `raise_invalid` "
                             )
                         )
                 else:

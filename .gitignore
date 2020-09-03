@@ -54,6 +54,9 @@ coverage.xml
 *.mo
 *.pot
 
+# Environments
+env
+
 # Sphinx Documentation
 docs/_build/
 
