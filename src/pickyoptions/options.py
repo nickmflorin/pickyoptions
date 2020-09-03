@@ -1,169 +1,43 @@
-# This is annoying, but required so long as pylint still gets confused with Metaclasses.
-# pylint: disable=E1123,E1101,E1120,E0213
 from copy import deepcopy
 import contextlib
 import functools
 import logging
-import pandas
-import six
 import sys
 
-from ..exceptions import UnrecognizedOption
-from ..utils.html import classnames_iterable
-
-from .stylesheet import default_stylesheet
-from .option import Option
+from .exceptions import OptionUnrecognizedError
 
 
-logger = logging.getLogger("options")
+logger = logging.getLogger("pickyoptions")
 
 
-def post_process_pandas_options(value, options):
-    for k, v in value.items():
-        pandas.set_option(k, v)
-
-
-def post_process_strict_option(value, options):
-    if value is False:
-        logger.warning("DiffEngine operating in non-strict mode.")
-
-
-class StyleOption(Option):
-    def __init__(self, field):
-        super(StyleOption, self).__init__(field, default={}, type=(dict, str), mergable=True)
-
-    def normalize(self, value, options):
-        # TODO: Convert style CSS string into a style dict object.
-        return value
-
-
-class ClassNameOption(Option):
-    def __init__(self, field):
-        super(ClassNameOption, self).__init__(field, default=(), allow_null=True, type=(str, list, tuple))
-
-    def normalize(self, value, options):
-        if value is None:
-            return ()
-        return classnames_iterable(value)
-
-
-# TODO: Investigate CSS Parsing Library Package
 class Options(object):
-    """
-    Options for the `sdiff` package.  These options are configured globally either/or by the `obj:DiffEngine`
-    instance instantiation or by explicitly configuring the package.  Options can be overridden on a temporary
-    local basis.
-    """
-    __options__ = (
-        Option("pandas_options", default={}, type=dict, post_process=post_process_pandas_options),
-        Option("old_color", default="#f5c6cb", type=str),  # salmon
-        Option("new_color", default="#d4edda", type=str),  # lightgreen
-        Option("fill_na", default="", type=(str, int, float, bool)),
-        Option("highlight", default=False, type=bool),
-        # Use a post process for this and log a warning.
-        Option("strict", default=True, type=[Option], post_process=post_process_strict_option, children=[
-            Option("split_added_dimensions", default=False, type=bool),
-            Option("split_modified_dimensions", default=True, type=bool),
-            Option("split_removed_dimensions", default=False, type=bool),
-        ]),
-        Option(
-            "sort_rows_by",
-            validator=lambda value, options: (
-                "Must either be a callable taking the row as it's only argument or a string attribute on the row."
-                if not callable(value) and not isinstance(value, six.string_types) else None
-            ),
-            allow_null=True
-        ),
-        Option(
-            "filter_results_by",
-            validator=lambda value, options: "Must be a callable." if not callable(value) else None,
-            allow_null=True
-        ),
-        Option(
-            "filter_rows_by",
-            validator=lambda value, options: "Must be a callable." if not callable(value) else None,
-            allow_null=True
-        ),
-        Option("split_added_dimensions", default=False, type=bool),
-        Option("split_modified_dimensions", default=True, type=bool),
-        Option("split_removed_dimensions", default=False, type=bool),
-        Option("dimension_header", default="TYPE", type=str),
-        Option("include_unique_identifiers", default=True, type=bool),
-        Option("include_table_header", default=True, type=bool),
-        Option("ignore_table_if_empty", default=True, type=bool),
-        Option("display_index", default=True, type=bool),
-        # TODO: Use a post process for this and log a warning if both are set.
-        Option(
-            "sort_index",
-            default=True,
-            type=bool,
-            validator=lambda value, options: (
-                "Sorting the index will override the sorting of rows. "
-                "Must provide EITHER the sort_index or sort_rows_by options, not both."
-                if options.sort_rows_by and value is True else None)
-        ),
-        StyleOption("table_header_style"),
-        ClassNameOption("table_header_class_name"),
-        Option("table_header_element", default="h6", type=str),
-
-        ClassNameOption("table_class_name"),
-        ClassNameOption("table_row_class_name"),
-        ClassNameOption("table_new_row_class_name"),
-        ClassNameOption("table_old_row_class_name"),
-        ClassNameOption("table_modified_row_class_name"),
-        ClassNameOption("table_cell_class_name"),
-        ClassNameOption("table_new_cell_class_name"),
-        ClassNameOption("table_old_cell_class_name"),
-        ClassNameOption("table_index_cell_class_name"),
-        ClassNameOption("table_header_cell_class_name"),
-        ClassNameOption("table_header_row_class_name"),
-
-        # TODO: Allow the style to be specified as a style string.
-        StyleOption("table_style"),
-        StyleOption("table_row_style"),
-        StyleOption("table_new_row_style"),  # Need to implement.
-        StyleOption("table_old_row_style"),  # Need to implement.
-        StyleOption("table_modified_style"),  # Need to implement.
-        StyleOption("table_cell_style"),
-        StyleOption("table_new_cell_style"),
-        StyleOption("table_old_cell_style"),
-        StyleOption("table_index_cell_style"),  # Need to implement.
-        StyleOption("table_header_cell_style"),  # Need to implement.
-        StyleOption("table_header_row_style"),  # Need to implement.
-
-        Option(
-            "stylesheet",
-            default=default_stylesheet,
-            type=(str, dict),
-            allow_null=True,
-            mergable=True
-        ),
-    )
-
-    def __init__(self, *args, **kwargs):
-        # Keeps track of the options that were set on initialization so the state of the `obj:Options` instance
-        # can be restored after overrides.
+    def __init__(self, *args):
+        # Keeps track of the options that were set on initialization so the state of the
+        # `obj:Options` instance can be restored after overrides.
         self._originally_set_options = {}
 
-        # Keeps track of whether or not options are currently being set or have already been set, which allows
-        # for the overall validation and post processing routines to take place once all the options have been set.
+        # Keeps track of whether or not options are currently being set or have already been set,
+        # which allows for the overall validation and post processing routines to take place once
+        # all the options have been set.
         self._settings_options = False
+        self._options = list(*args)
 
-        # Set the options provided on initialization and run the post processing routines and validation routines
-        # after all of the options have been set.
+    def __call__(self, *args, **kwargs):
+        # Set the options provided on initialization and run the post processing routines and
+        # validation routines after all of the options have been set.
         with self.settings_options():
             data = dict(*args, **kwargs)
-            for opt in self.__options__:
+            for opt in self._options:
                 if opt.field in data:
-                    # Keep track of the fields that were explicitly set so that they can be reset to the
-                    # originals at a later point in time.
+                    # Keep track of the fields that were explicitly set so that they can be
+                    # reset to the originals at a later point in time.
                     self._originally_set_options[opt.field] = data[opt.field]
                 setattr(self, opt.field, data.get(opt.field, opt.default))
 
         # Make sure that no invalid options provided.
         for k, _ in data.items():
-            if k not in [opt.field for opt in self.__options__]:
-                raise UnrecognizedOption(k)
+            if k not in self.option_fields:
+                raise OptionUnrecognizedError(k)
 
     def __repr__(self):
         return "<Options {params}>".format(
@@ -183,14 +57,16 @@ class Options(object):
     @property
     def __dict__(self):
         data = {}
-        for option in self.__options__:
+        for option in self._options:
             data[option.field] = getattr(self, option.field)
         return data
 
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
+        result._settings_options = self._settings_options
         result._originally_set_options = self._originally_set_options
+        result._options = self._options[:]
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             setattr(result, k, deepcopy(v, memo))
@@ -208,8 +84,8 @@ class Options(object):
             # the existing value of the option will be updated with the new value for the option,
             # not replaced.
 
-            # TODO: Should we only do this if the option is defaulted?  We might want to override user specific
-            # options.
+            # TODO: Should we only do this if the option is defaulted?  We might want to override
+            # user specific options.
 
             # TODO: For the stylesheet case, we are normalizing it to a string when it is set.  We should probably
             # keep storing this as a dict, and just convert it to a string when we need it.
@@ -231,20 +107,24 @@ class Options(object):
                 if option.post_process:
                     option.post_process(value_to_set, self)
 
+    @property
+    def option_fields(self):
+        return [opt.field for opt in self._options]
+
     def option(self, k):
         """
         Returns the `obj:Option` associated with the provided field.
         """
         try:
-            return [opt for opt in self.__options__ if opt.field == k][0]
+            return [opt for opt in self._options if opt.field == k][0]
         except IndexError:
-            raise UnrecognizedOption(k)
+            raise OptionUnrecognizedError(k)
 
     def raise_invalid(self, field, message=None):
         """
-        Raises an InvalidOptionError for the option associated with the provided field.
+        Raises an OptionInvalidError for the option associated with the provided field.
         """
-        option = self._option_for_field(field)
+        option = self.option(field)
         option.raise_invalid(message=message)
 
     @classmethod
