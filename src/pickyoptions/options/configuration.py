@@ -1,38 +1,50 @@
-import six
+from pickyoptions.configuration import ConfigurableModel
+from pickyoptions.configuration.utils import configurable_property, configurable_property_setter
 
-from pickyoptions.lib.utils import check_num_function_arguments
-from pickyoptions.configuration.configuration import Configuration
-
-from .exceptions import OptionsConfigurationError
-
-
-class OptionsConfiguration(Configuration):
-    exception_cls = OptionsConfigurationError
+from .configurations import (
+    PostProcessorConfiguration, ValidateConfiguration, OptionsConfiguration)
 
 
-class PostProcessorConfiguration(OptionsConfiguration):
-    def __init__(self, field):
-        super(PostProcessorConfiguration, self).__init__(field, required=False, default=None)
+class OptionsConfiguration(ConfigurableModel):
+    configurations = (
+        PostProcessorConfiguration('post_processor'),
+        ValidateConfiguration('validator'),
+        OptionsConfiguration('strict', default=False, types=(bool, )),
+    )
 
-    def validate(self, value):
-        super(PostProcessorConfiguration, self).validate(value)
-        if value is not None:
-            if not six.callable(value) or not check_num_function_arguments(value, 1):
-                self.raise_invalid(
-                    "Must be a callable that takes the options instance as it's first and "
-                    "only argument."
-                )
+    @property
+    def options(self):
+        # Not stored as a separate configuration variable but still requires validation of the
+        # configuration when set/changed.
+        return self._options
 
+    @options.setter
+    def options(self, value):
+        # Not stored as a separate configuration variable but still requires validation of the
+        # configuration when set/changed.
+        self._options = value
+        self.validate_configuration()
 
-class ValidateConfiguration(OptionsConfiguration):
-    def __init__(self, field):
-        super(ValidateConfiguration, self).__init__(field, required=False, default=None)
+    @configurable_property
+    def post_processor(self):
+        pass
 
-    def validate(self, value):
-        super(ValidateConfiguration, self).validate(value)
-        if value is not None:
-            if not six.callable(value) or not check_num_function_arguments(value, 1):
-                self.raise_invalid(
-                    "Must be a callable that takes the options instance as it's first and "
-                    "only argument."
-                )
+    @configurable_property_setter(post_processor)
+    def post_processor(self, value):
+        pass
+
+    @configurable_property
+    def validator(self):
+        pass
+
+    @configurable_property_setter(validator)
+    def validator(self, value):
+        pass
+
+    @configurable_property
+    def strict(self):
+        pass
+
+    @configurable_property_setter(strict)
+    def strict(self, value):
+        pass

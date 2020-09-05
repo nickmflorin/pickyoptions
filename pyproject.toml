@@ -10,11 +10,11 @@ include = ["src/*.py"]
 
 [tool.poetry.dependencies]
 python = "^3.7"
-ipdb = "^0.13.3"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"
 ipdb = "0.13.3"
+pytest-catchlog = "^1.2.2"
 
 [build-system]
 requires = ["poetry>=0.12"]

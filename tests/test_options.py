@@ -1,11 +1,17 @@
+import pytest
+
 from pickyoptions import Option, Options
 
 
-def test_restore_options():
-    options = Options(
+@pytest.fixture
+def options():
+    yield Options(
         Option('foo', default='fooey_default'),
         Option('bar')
     )
+
+
+def test_restore_options(options):
     options.populate(foo='fooey_non_default', bar='barrey')
     assert options.foo == 'fooey_non_default'
     options.override(foo='fooey_override')
@@ -14,11 +20,9 @@ def test_restore_options():
     assert options.foo == 'fooey_non_default'
 
 
-def test_populate_unspecified_unrequired_value():
-    options = Options(
-        Option('foo', required=True),
-        Option('bar')
-    )
+def test_populate_unspecified_unrequired_value(options, caplog):
     options.populate(foo='bar')
-    assert options.foo == 'bar'
-    options.foo = None
+    assert dict(options) == {
+        'foo': 'bar',
+        'bar': None
+    }

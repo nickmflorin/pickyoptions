@@ -6,36 +6,6 @@ import sys
 from .exceptions import ConfigurationDoesNotExist
 
 
-def configurable_property_setter(obj):
-    def _decorator(func):
-        @obj.setter
-        def inner(instance, value):
-            instance._configuration[func.__name__] = value
-
-            # If we are not in the process of setting multiple different configurations values,
-            # we should validate after it is set.
-            if not instance.configuring:
-                instance.validate_configuration()
-        return inner
-    return _decorator
-
-
-def configurable_property(func):
-    @property
-    def inner(instance):
-        # Get the actual configuration object.
-        configuration = instance.configuration(func.__name__)
-
-        # If the value associated with the configuration object was configured, return
-        # it.  Otherwise, we need to return the default.
-        if configuration.field in instance._configuration:
-            return instance._configuration[configuration.field]
-
-        assert not configuration.required
-        return configuration.default
-    return inner
-
-
 class ConfigurableModel(six.with_metaclass(ABCMeta, object)):
     configurations = ()
 
