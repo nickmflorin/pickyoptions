@@ -24,8 +24,8 @@ def flatten(arrays, ignore_types=None, cast=list):
 
 def ensure_iterable(value, cast=list):
     """
-    Ensures that the value is an iterable.  If the provided value is not an iterable, it will return an iterable
-    with the provided value as the first element.
+    Ensures that the value is an iterable.  If the provided value is not an iterable, it will
+    return an iterable with the provided value as the first element.
     """
     if hasattr(value, '__iter__') and not isinstance(value, type):
         return value
@@ -35,8 +35,8 @@ def ensure_iterable(value, cast=list):
 
 def merge_dicts(dicts):
     """
-    Merges an array of `obj:dict` instances together by copying the first `obj:dict` in the array and merging
-    the subsequent ones.
+    Merges an array of `obj:dict` instances together by copying the first `obj:dict` in the array
+    and merging the subsequent ones.
     """
     if len(dicts) == 0:
         return {}

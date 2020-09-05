@@ -1,5 +1,5 @@
-from pickyoptions.exceptions import (
-    ValueParameterizedError, PickyOptionsUserError, PickyOptionsConfigurationError)
+from pickyoptions.exceptions import ValueParameterizedError, PickyOptionsUserError
+from pickyoptions.configuration.exceptions import PickyOptionsConfigurationError
 from pickyoptions.lib.utils import ensure_iterable
 
 

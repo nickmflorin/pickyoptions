@@ -43,16 +43,13 @@ class PickyOptionsError(Exception):
         return self.message
 
 
-class PickyOptionsUserError(PickyOptionsError):
-    """
-    Base class for exceptions that are raised due to user supplied options.
-    """
+class PickyOptionsAttributeError(PickyOptionsError, AttributeError):
     pass
 
 
-class PickyOptionsConfigurationError(PickyOptionsError):
+class PickyOptionsUserError(PickyOptionsError):
     """
-    Base class for exceptions that are raised during configuration of the options.
+    Base class for exceptions that are raised due to user supplied options.
     """
     pass
 

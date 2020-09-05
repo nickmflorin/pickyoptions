@@ -1,6 +1,5 @@
-from pickyoptions.exceptions import (
-    ValueParameterizedError, PickyOptionsUserError, PickyOptionsConfigurationError)
-
+from pickyoptions.exceptions import ValueParameterizedError, PickyOptionsUserError
+from pickyoptions.configuration.exceptions import PickyOptionsConfigurationError
 
 __all__ = (
     'OptionsInvalidError',
@@ -12,6 +11,10 @@ class OptionsError(ValueParameterizedError):
     Abstract base class for all exceptions that are raised in reference to a specific set
     of of `obj:Options`.
     """
+    pass
+
+
+class OptionsNotPopulatedError(OptionsError):
     pass
 
 
