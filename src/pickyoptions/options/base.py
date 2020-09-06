@@ -6,13 +6,16 @@ import six
 import sys
 
 from pickyoptions import settings
-from pickyoptions.exceptions import PickyOptionsAttributeError
+from pickyoptions.exceptions import PickyOptionsError
+
+
+from pickyoptions.configuration.exceptions import ConfigurationInvalidError
 
 from pickyoptions.option.exceptions import (
     OptionUnrecognizedError, OptionInvalidError, OptionRequiredError)
 
 from .configuration import OptionsConfiguration
-from .exceptions import OptionsConfigurationError, OptionsInvalidError, OptionsNotPopulatedError
+from .exceptions import OptionsInvalidError, OptionsNotPopulatedError
 from .utils import requires_population
 
 
@@ -62,17 +65,26 @@ class Options(OptionsConfiguration):
     def __init__(self, *args, **kwargs):
         # Keeps track of the options that were set on population so the state of the
         # `obj:Options` instance can be restored after overrides are applied.
-        self._populated_options = {}
+        # self._populated_options = {}
 
         # Keeps track of whether or not the `obj:Options` instance has already been populated
         # and whether or not it is actively being populated.
         self._populated = False
         self._populating = False
 
+        self._overridden = False
+
         # Keeps track of the option values that are overridden after population.
-        self._overrides = {}
-        self._mapping = {}
+        # self._overrides = {}
+        # self._mapping = {}
+
+        # TODO: Do we have to worry about the mutability/inmutability of the options?  Since
+        # we are setting the values on the options.
+        # TODO: We also need to do this if the options are set at a later point in time.
+        # Why aren't we setting self.options instead of self._options?
         self._options = list(args)
+        for option in self._options:
+            option._options = self
 
         super(Options, self).__init__(**kwargs)
 
@@ -80,8 +92,9 @@ class Options(OptionsConfiguration):
         if self.populated:
             return "<{cls_name} {params}>".format(
                 cls_name=self.__class__.__name__,
-                params=", ".join(["{k}={v}".format(k=k, v=v) for k, v in self.__dict__.items()])
+                params=", ".join(["{k}={v}".format(k=k, v=v) for k, v in self.zipped])
             )
+        # Note: This causes problems if the options are not set as the private variable yet.
         return "<{cls_name} UNPOPULATED [{options}]>".format(
             cls_name=self.__class__.__name__,
             options=", ".join([option.field for option in self.options])
@@ -113,18 +126,15 @@ class Options(OptionsConfiguration):
 
     # TODO: Implement __delattr__ method and __delitem__ method.
     def __getattr__(self, k):
-        print("Retreiving attribute %s." % k)
         # If the options are not yet populated, we only allow the retrieval of a configuration
         # value, not the option values themselves.
         if not self.populated:
-
-            import ipdb; ipdb.set_trace()
             if settings.DEBUG:
-                raise PickyOptionsAttributeError(
+                raise PickyOptionsError(
                     "Operation %s not permitted if the options are not "
                     "yet populated." % self.__getattr__.__name__,
                 )
-            raise PickyOptionsAttributeError(
+            raise PickyOptionsError(
                 "The attribute %s does not exist in the options configuration and the "
                 "options have not been populated yet.  If accessing a specific option, the "
                 "options must be populated."
@@ -132,59 +142,82 @@ class Options(OptionsConfiguration):
         # TODO: Do we really want this to raise an error indicating that the option is not
         # recognized instead of an actual attribute error?
         option = self.option(k)
-        try:
-            value = self._mapping[option.field]
-        except OptionUnrecognizedError:
-            if settings.DEBUG:
-                raise AttributeError("The attribute %s does not exist." % k)
-            six.reraise(*sys.exc_info())
-        except KeyError:
-            # I think the option is already guaranteed to not be required since an error would
-            # have been raised previously when populating or setting?
-            if option.required:
-                if option.default:
-                    # TODO: We might wind up logging this warning in multiple locations,
-                    # we should prune those loggings.  We should log this when the option
-                    # is configured.
-                    logger.warn(
-                        "The unspecified option %s is required but also specifies a "
-                        "default - the default makes the option requirement obsolete."
-                        % option.field
-                    )
-                else:
-                    # TODO: This might already be guaranteed to not happen based on the
-                    # logic in the populate/__setattr__ method.
-                    option.raise_required()
 
-            assert not option.required
-            logger.debug("Returning default value %s for option %s."
-                % (option.default, option.field))
-            return option.normalize(option.default)
-        else:
-            return option.normalize(value)
+        # Is this safe?  What about the case where the option value is not provided but has a
+        # default?
+        # The option may not be populated yet if it is not required and has a default.  We should
+        # close out the loose ends in this logic more, maybe by having a property that lets you
+        # know if it is going to use it's default value.
+        # assert option.populated
+        return option.value
+        #
+        # try:
+        #     # value = self._mapping[option.field]
+        #     value = option.value
+        # # except OptionUnrecognizedError:
+        # #     if settings.DEBUG:
+        # #         raise AttributeError("The attribute %s does not exist." % k)
+        # #     six.reraise(*sys.exc_info())
+        # except KeyError:
+        #     # I think the option is already guaranteed to not be required since an error would
+        #     # have been raised previously when populating or setting?
+        #     if option.required:
+        #         if option.default:
+        #             # TODO: We might wind up logging this warning in multiple locations,
+        #             # we should prune those loggings.  We should log this when the option
+        #             # is configured.
+        #             logger.warn(
+        #                 "The unspecified option %s is required but also specifies a "
+        #                 "default - the default makes the option requirement obsolete."
+        #                 % option.field
+        #             )
+        #         else:
+        #             # TODO: This might already be guaranteed to not happen based on the
+        #             # logic in the populate/__setattr__ method.
+        #             option.raise_required()
+
+        #     # assert not option.required
+        #     return option.normalize(option.default)
+        # else:
+        #     return option.normalize(value)
 
     def __setattr__(self, k, v):
         if k.startswith('_'):
             super(Options, self).__setattr__(k, v)
         else:
-            print("Setting Option %s" % k)
-            # if self.populated:
-            #     raise Exception()
-
+            # TODO: Do we want to allow the setting of new options that are not already set?
             option = self.option(k)
 
             # Only validate if we are not actively populating the options, otherwise they will
             # all be validated afterwards.
-            if not self.populating:
-                option.validate(v, self)
+            # TODO: This is not the same as what happens when the individual options are validated
+            # in the validate() method - there it validates the default/normalized value.
+            if self.populating:
+                option.populate(v)
+                # option.validate_with_options(self)
+                # option.validate(v, self)
+            else:
+                option.value = v
+                # We do not need to perform validation and post processing routines with the
+                # siblings for all children.
+                self.do_validate(children=[option])
+                self.do_post_process(children=[option])
+                # option.validate_with_options(self)
+                # option.validate(v, self)
 
-            self._mapping[option.field] = v
+            # option.populate(v)
+            # self._mapping[option.field] = v
 
             # If all the options have been set, validate the `obj:Options` instance as a whole and
             # perform the post processing routines on the individual options as well.
-            if not self.populating:
-                self.validate()
-                option.post_process_option(v, self)
+            # if not self.populating:
+            #     self.validate()
+            #     option.validate_on_options_populated()
+                # option.post_process()
+                # option.validate()
+                # Only do this if we are only setting one at a time, otherwise all of the
+                # options wil not have been set yet.
+                # option.validate_with_options(self)
 
     @property
     def zipped(self):
@@ -210,15 +243,26 @@ class Options(OptionsConfiguration):
             values.append(getattr(self, option.field))
         return values
 
-    def _pre_configure(self):
+    def configure(self, *args, **kwargs):
         self.reset()
+        super(Options, self).configure(*args, **kwargs)
 
     @property
     def populated(self):
+        """
+        Returns whether or not the `obj:Options` have been populated.
+
+        This value will only be False before the first population, afterwards it will remain
+        True unless the options are reset - which would require another population afterwards.
+        """
         return self._populated
 
     @property
     def populating(self):
+        """
+        Returns whether or not the `obj:Options` are in the process of populating the children
+        `obj:Option`(s) with values.
+        """
         return self._populating
 
     @property
@@ -294,6 +338,7 @@ class Options(OptionsConfiguration):
                             )
                         else:
                             option.raise_invalid(cls=OptionRequiredError)
+
                 else:
                     # Keep track of the fields that were explicitly set so that they can be
                     # reset to the originals at a later point in time.  When overriding, the
@@ -320,10 +365,10 @@ class Options(OptionsConfiguration):
             # be True, until the options are reset.
             self._populated = True
             # The options are still `populating` at the time the last option is set, so we need
-            # to run the validation and post-processing routines for all individual options as
+            # to run the validation and post-processing routines for all child options as
             # well.
-            self.validate(individual_options=True)
-            self.post_process(individual_options=True)
+            self.do_validate()
+            self.do_post_process()
 
     def reset(self):
         """
@@ -389,7 +434,7 @@ class Options(OptionsConfiguration):
         sys.stdout.write("\n\n".join(opt.display for opt in self.__options__))
 
     @requires_population
-    def validate(self, individual_options=False):
+    def do_validate(self, children=None):
         """
         Validates the overall `obj:Options` instance, based on the provided `validate` argument
         on initialization, after the options have been initialized, configured or overidden.
@@ -402,57 +447,32 @@ class Options(OptionsConfiguration):
         it can either raise `obj:OptionsInvalidError`, `obj:OptionInvalidError`, call the
         `raise_invalid` method on the `obj:Options` or one of the children `obj:Option`(s) or
         it can return a string message.  If the `obj:Options` are valid, it must return `None`.
-
-        Parameters:
-        ----------
-        individual_options: `obj:bool` (optional)
-            If True, the options will not only be validated as a whole but each individual option
-            will also be validated.  This happens after population of multiple options.
-            Default: False
         """
-        if individual_options:
-            logger.debug("Validating individual options.")
-            for option in self.options:
-                v = getattr(self, option.field)
-                # This will validate default values and normalized values.
-                option.validate(v, self)
-                #
-                # if option.field in self._mapping:
-                #     # TODO: Conglomerate errors together.
-                #     option.validate(self._mapping[option.field], self)
-                # else:
-                #     if option.required:
-                #         if option.default:
-                #             # TODO: We might wind up logging this warning in multiple locations,
-                #             # we should prune those loggings.
-                #             logger.warn(
-                #                 "The unspecified option %s is required but also specifies a "
-                #                 "default - the default makes the option requirement obsolete."
-                #                 % option.field
-                #             )
-                #         else:
-                #             # TODO: This might already be guaranteed to not happen based on the
-                #             # logic in the populate method.
-                #             option.raise_required()
-                #     else:
-                #         logger.debug(
-                #             "Not validating option %s - the option is not required and "
-                #             "is not present." % option.field
-                        # )
+        children = children or self.options
+        logger.debug("Validating %s children options." % len(children))
+        for option in children:
+            # TODO:  The option need not be populated yet, because non-required options that have a
+            #        default value will not be populated if they are not in the population data.
+            #        However, we should add a property to the `obj:Option` to indicate that it is
+            #        not populated but will return a default value.
+            option.validate_with_siblings()
 
         # Validate the overall options set if the validator is provided.
-        if self.validator is not None:
-            logger.debug("Validating options")
+        if self.validate is not None:
+            logger.debug("Validating overall options.")
             # In the case that the options are invalid, validation method either returns a
             # string method or raises one of OptionInvalidError or OptionsInvalidError (or an
             # extension of).
+            # TODO: Should we maybe lax the restriction of what exception the valiation routines
+            #       should throw?  To make the package more user friendly?
             try:
-                result = self.validator(self)
+                result = self.validate(self)
             except Exception as e:
                 if isinstance(e, (OptionsInvalidError, OptionInvalidError)):
                     six.reraise(*sys.exc_info())
                 else:
-                    exc = OptionsConfigurationError(
+                    # TODO: Should we maybe lax this assumption?
+                    exc = ConfigurationInvalidError(
                         field='validate',
                         message=(
                             "If raising an exception to indicate that the options are invalid, "
@@ -465,7 +485,7 @@ class Options(OptionsConfiguration):
             else:
                 if result is not None:
                     if not isinstance(result, six.string_types):
-                        exc = OptionsConfigurationError(
+                        exc = ConfigurationInvalidError(
                             field='validate',
                             message=(
                                 "The option validate method must return a string error "
@@ -479,7 +499,7 @@ class Options(OptionsConfiguration):
                         self.raise_invalid(message=result)
 
     @requires_population
-    def post_process(self, individual_options=False):
+    def do_post_process(self, children=None):
         """
         Performs the post-processing routines associated with the overall `obj:Options` and
         all of the individual `obj:Option`(s) after the options have been initialized, configured
@@ -489,45 +509,19 @@ class Options(OptionsConfiguration):
         `obj:Options` instance as it's only argument.  The individual `obj:Option` `post_process`
         methods must be callables that take the set value as it's first argument and the
         overall `obj:Options` instance as it's second argument.
-
-        Parameters:
-        ----------
-        individual_options: `obj:bool` (optional)
-            If True, the options will not only be post processed as a whole but each individual
-            option will also be post processed.  This happens after population of multiple options.
-            Default: False
         """
-        # TODO: Should we maybe allow the option to be post processed even if it's value is not
-        # set?
-        if individual_options:
-            logger.debug("Post processing individual options.")
-            for option in self.options:
-                if option.field in self._mapping:
-                    # TODO: Conglomerate errors together.
-                    option.post_process(self._mapping[option.field], self)
-                else:
-                    if option.required:
-                        if option.default:
-                            # TODO: We might wind up logging this warning in multiple locations,
-                            # we should prune those loggings.
-                            logger.warn(
-                                "The unspecified option %s is required but also specifies a "
-                                "default - the default makes the option requirement obsolete."
-                                % option.field
-                            )
-                        else:
-                            # TODO: This might already be guaranteed to not happen based on the
-                            # logic in the populate method.
-                            option.raise_required()
-                    else:
-                        logger.debug(
-                            "Not validating option %s - the option is not required and "
-                            "is not present." % option.field
-                        )
+        children = children or self.options
+        logger.debug("Post processing individual options.")
+        for option in children:
+            # TODO:  The option need not be populated yet, because non-required options that have a
+            #        default value will not be populated if they are not in the population data.
+            #        However, we should add a property to the `obj:Option` to indicate that it is
+            #        not populated but will return a default value.
+            option.post_process_with_siblings()
 
-        if self.post_processor is not None:
+        if self.post_process is not None:
             logger.debug("Post processing options")
-            self.post_processor(self)
+            self.post_process(self)
 
     @requires_population
     def local_override(self, func):
@@ -576,16 +570,6 @@ class Options(OptionsConfiguration):
             return result
 
         return inner
-
-    def validate_configuration(self):
-        """
-        Validates the configuration for configuration variables that depend on one another,
-        after they are set.
-        """
-        # TODO: Validate that the options are all instances of options.  Note that we don't have
-        # to validate the configuration of the individual options since that is done when they are
-        # instantiated.
-        pass
 
 
 options = Options()

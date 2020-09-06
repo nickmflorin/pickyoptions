@@ -3,14 +3,8 @@ import six
 from pickyoptions.lib.utils import check_num_function_arguments
 from pickyoptions.configuration import Configuration
 
-from .exceptions import OptionsConfigurationError
 
-
-class OptionsConfiguration(Configuration):
-    exception_cls = OptionsConfigurationError
-
-
-class PostProcessorConfiguration(OptionsConfiguration):
+class PostProcessorConfiguration(Configuration):
     def __init__(self, field):
         super(PostProcessorConfiguration, self).__init__(field, required=False, default=None)
 
@@ -24,7 +18,7 @@ class PostProcessorConfiguration(OptionsConfiguration):
                 )
 
 
-class ValidateConfiguration(OptionsConfiguration):
+class ValidateConfiguration(Configuration):
     def __init__(self, field):
         super(ValidateConfiguration, self).__init__(field, required=False, default=None)
 

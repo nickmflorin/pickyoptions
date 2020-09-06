@@ -6,23 +6,32 @@ from pickyoptions import Option, Options
 @pytest.fixture
 def options():
     yield Options(
-        Option('foo', default='fooey_default'),
-        Option('bar')
+        Option('color', default='red'),
+        Option('height', required=True, enforce_type=(int, float)),
+        Option('width', required=False, default=0.0, enforce_type=(int, float)),
     )
 
 
 def test_restore_options(options):
-    options.populate(foo='fooey_non_default', bar='barrey')
-    assert options.foo == 'fooey_non_default'
-    options.override(foo='fooey_override')
-    assert options.foo == 'fooey_override'
+    options.populate(color='blue', height=5)
+    assert options.color == 'blue'
+    assert options.height == 5
+    assert options.width == 0.0
+
+    options.override(color='red')
+    assert options.color == 'red'
     options.restore()
-    assert options.foo == 'fooey_non_default'
+    assert options.color == 'blue'
 
 
 def test_populate_unspecified_unrequired_value(options, caplog):
-    options.populate(foo='bar')
+    options.populate(color='blue', height=2.0)
     assert dict(options) == {
-        'foo': 'bar',
-        'bar': None
+        'color': 'blue',
+        'height': 2.0,
+        'width': 0.0,
     }
+
+
+def test_validate_options():
+    pass

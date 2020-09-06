@@ -1,3 +1,6 @@
+from pickyoptions.lib.utils import ensure_iterable
+
+
 class PickyOptionsError(Exception):
     """
     Base class for all pickyoptions exceptions.
@@ -6,6 +9,15 @@ class PickyOptionsError(Exception):
 
     def __init__(self, *args, **kwargs):
         super(PickyOptionsError, self).__init__()
+        self._injectable_arguments = []
+
+        self.identifier = kwargs.pop('identifier', getattr(self, 'identifier', None))
+
+        for k, v in kwargs.items():
+            if k != 'message':
+                self._injectable_arguments.append(k)
+                setattr(self, k, v)
+
         try:
             self._message = args[0] if len(args) != 0 else kwargs.pop('message',
                 getattr(self, 'default_message'))
@@ -14,98 +26,59 @@ class PickyOptionsError(Exception):
                 "Must provide the exception message or set a default on the class."
             )
 
-    @property
-    def arguments(self):
-        return ()
-
     def _inject_message_parameters(self, message):
         injection = {}
-        for k in self.arguments:
+        for k in self._injectable_arguments:
             if "{%s}" % k in message:
                 injection[k] = getattr(self, k)
         return message.format(**injection)
 
     @property
-    def bare_message(self):
-        return self._message or self.default_message
+    def _injectable_message(self):
+        injectables = []
+        for argument in self._injectable_arguments:
+            value = getattr(self, argument, None)
+            if value is not None and "{%s}" % argument not in self.message:
+                injectables.append((argument, value))
+        if injectables:
+            return "(%s)" % ", ".join([
+                "%s = %s" % (argument, value)
+                for argument, value in injectables
+            ]) + " " + self.message
+        return self.message
+
+    @property
+    def _injected_message(self):
+        return self._inject_message_parameters(self._injectable_message)
 
     @property
     def message(self):
-        bare_message = self._inject_message_parameters(self.bare_message)
-        if hasattr(self, "identifier"):
-            return "\n%s: %s" % (self.identifier, bare_message)
-        return bare_message
+        return self._message
+
+    @property
+    def full_message(self):
+        if self.identifier is not None:
+            return "%s: %s" % (self.identifier, self._injected_message)
+        return self._injected_message
 
     def __str__(self):
-        return self.message
+        return self.full_message
 
     def __repr__(self):
-        return self.message
+        return self.full_message
 
 
-class PickyOptionsAttributeError(PickyOptionsError, AttributeError):
-    pass
-
-
-class PickyOptionsUserError(PickyOptionsError):
+class ObjectTypeError(PickyOptionsError):
     """
-    Base class for exceptions that are raised due to user supplied options.
-    """
-    pass
-
-
-class FieldParameterizedError(PickyOptionsError):
-    """
-    Abstract base class for exceptions that include a parameter argument.
+    Raised when an option user provided value is required to be of a specific type but is
+    not of that type.
     """
     def __init__(self, *args, **kwargs):
-        self._field = kwargs.pop('field', None)
-        super(FieldParameterizedError, self).__init__(*args, **kwargs)
+        kwargs['types'] = ensure_iterable(kwargs['types'])
+        super(ObjectTypeError, self).__init__(*args, **kwargs)
 
     @property
-    def arguments(self):
-        arguments = super(FieldParameterizedError, self).arguments
-        return arguments + ('field', )
-
-    @property
-    def field(self):
-        return self._field
-
-    @property
-    def bare_message(self):
-        if self.field is None:
-            return super(FieldParameterizedError, self).bare_message
-        elif self._message is not None:
-            return "(field = {field}) - %s" % self._message
-        return "(field = {field})"
-
-
-class ValueParameterizedError(FieldParameterizedError):
-    """
-    Abstract base class for exceptions that include a value argument.
-    """
-    def __init__(self, *args, **kwargs):
-        self._value = kwargs.pop("value", None)
-        super(ValueParameterizedError, self).__init__(*args, **kwargs)
-
-    @property
-    def arguments(self):
-        arguments = super(ValueParameterizedError, self).arguments
-        return arguments + ('value', )
-
-    @property
-    def value(self):
-        return self._value
-
-    @property
-    def bare_message(self):
-        if self.value is None:
-            return super(ValueParameterizedError, self).bare_message
-        elif self.field is None:
-            if self._message is not None:
-                return "{value} - %s" % self._message
-            return "{value}"
-        else:
-            if self._message is not None:
-                return "{field} = {value} - %s" % self._message
-            return "{field} = {value}"
+    def default_message(self):
+        if getattr(self, 'field', None) is not None:
+            return "The field {field} must be an instance of {types}."
+        return "Must be an instance of {types}."

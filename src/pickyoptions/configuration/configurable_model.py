@@ -1,18 +1,23 @@
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta
 import contextlib
 import six
 import sys
 
-from .exceptions import ConfigurationDoesNotExist
+from .exceptions import ConfigurationDoesNotExist, NotConfiguredError
 
 
 class ConfigurableModel(six.with_metaclass(ABCMeta, object)):
     configurations = ()
 
     def __init__(self, **kwargs):
-        self._configuration = {}
         self._configured = False
         self._configuring = False
+
+        # Right now, until we have a better system, the configuration mapping will be by
+        # private key attributes.
+        self._configuration = {}
+
+        # Configure the model with the provided configuration values.
         self.configure(**kwargs)
 
     @property
@@ -40,19 +45,19 @@ class ConfigurableModel(six.with_metaclass(ABCMeta, object)):
         return self._configuring
 
     def configure(self, **kwargs):
-        self._pre_configure()
         with self._configuring_context():
-
             # Set configurations that are supplied to the model.
             for k, v in kwargs.items():
                 configuration = self.configuration(k)
+                # If the value is None, the requirement check will be performed in the validate()
+                # method.
                 configuration.validate(v)
                 self._configuration[configuration.field] = v
 
             # Make sure all required configurations are provided.
             for configuration in self.configurations:
-                if configuration.required and configuration.field not in kwargs:
-                    raise ValueError()  # Configuration Required
+                if configuration.field not in kwargs:
+                    configuration.validate_not_provided()
 
     @contextlib.contextmanager
     def _configuring_context(self):
@@ -64,15 +69,11 @@ class ConfigurableModel(six.with_metaclass(ABCMeta, object)):
             six.reraise(*sys.exc_info())
         else:
             self._configuring = False
-            self._post_configuration()
+            self._configured = True
+            self.validate_configuration()
 
-    def _post_configuration(self):
-        self._configured = True
-        self.validate_configuration()
-
-    def _pre_configure(self):
-        pass
-
-    @abstractmethod
     def validate_configuration(self):
-        pass
+        if not self.configured:
+            raise NotConfiguredError(
+                "The %s instance must be configured." % self.__class__.__nane__
+            )

@@ -1,54 +1,65 @@
 import six
 
-from pickyoptions.configuration import ConfigurableModel
+from pickyoptions.configuration import ConfigurableModel, Configuration
+from pickyoptions.configuration.exceptions import ConfigurationTypeError, ConfigurationInvalidError
 from pickyoptions.configuration.utils import configurable_property, configurable_property_setter
-from pickyoptions.exceptions import PickyOptionsError
 
 from .configurations import (
-    OptionConfiguration, ValidateConfiguration, PostProcessorConfiguration,
-    ValidateWithOthersConfiguration, NormalizeConfiguration, DisplayConfiguration)
-from .exceptions import OptionConfigurationError
+    ValidateConfiguration, ValidateWithOthersConfiguration,
+    NormalizeConfiguration, DisplayConfiguration,
+    PostProcessConfiguration, PostProcessWithSiblingsConfiguration)
 
 
 class OptionConfiguration(ConfigurableModel):
     configurations = (
-        OptionConfiguration('default'),
-        OptionConfiguration('required', types=(bool, )),
-        OptionConfiguration('required_not_null', types=(bool, )),
-        OptionConfiguration('allow_null', types=(bool, )),
-        OptionConfiguration('enforce_type'),  # TODO: Add restriction
+        Configuration('default', default=None),
+        Configuration('required', types=(bool, ), default=False),
+        Configuration('required_not_null', types=(bool, ), default=False),
+        # TODO: The allow_null property might cause issues with the default value if the default
+        # is None.  We should handle that more appropriately, or make the default value conditional
+        # on the other configurations.
+        Configuration('allow_null', types=(bool, ), default=True),
+        Configuration('enforce_type', default=None),  # TODO: Add restriction
         ValidateConfiguration('validator'),
         ValidateWithOthersConfiguration('validator_with_others'),
+        # TODO: validate_after_normalization
         NormalizeConfiguration('normalizer'),
-        PostProcessorConfiguration('post_processor'),
+        PostProcessConfiguration('post_process'),
+        PostProcessWithSiblingsConfiguration('post_process_with_siblings'),
         DisplayConfiguration('displayer'),
-        OptionConfiguration("help_text", default="", types=six.string_types)
+        Configuration("help_text", default="", types=six.string_types)
     )
 
     def validate_configuration(self):
-        if not self.configured:
-            raise PickyOptionsError("Must be configured.")
+        super(OptionConfiguration, self).validate_configuration()
 
+        # We cannot use a validator for the field configuration since it is treated differently
+        # from the other configuration parameters, since it is provided in the *args.
         if not isinstance(self.field, six.string_types):
-            raise OptionConfigurationError(
+            raise ConfigurationTypeError(
                 field="field",
-                message="Must be of type %s." % type(str)
+                types=six.string_types
             )
-
-        if self.default is not None and self.required:
-            # This should not happen, as a required option should not have a default.  We will
-            # either raise an exception or log a warning.
-            raise ValueError()
-
-        if self.default is not None and self.enforce_type is not None:
+        elif self.field.startswith('_'):
+            raise ConfigurationInvalidError(
+                field="field",
+                message="The configuration `{field}` cannot be scoped as a private attribute."
+            )
+        elif self.default is not None and self.enforce_type is not None:
             if not isinstance(self.default, self.enforce_type):
-                raise OptionConfigurationError(
+                raise ConfigurationTypeError(
                     field='default',
+                    types=self.enforce_type,
                     message=(
-                        "If enforcing that the option be of a certain type, the default value "
-                        "must also be of that type."
+                        "If enforcing that the option be of type {types}, the default value "
+                        "must also be of type {types}."
                     )
                 )
+        # Do we have to worry about this anymore?
+        # if self.default is not None and self.required:
+        #     # This should not happen, as a required option should not have a default.  We will
+        #     # either raise an exception or log a warning.
+        #     raise ValueError()
 
     @configurable_property
     def default(self):
@@ -107,11 +118,19 @@ class OptionConfiguration(ConfigurableModel):
         pass
 
     @configurable_property
-    def post_processor(self):
+    def post_process(self):
         pass
 
-    @configurable_property_setter(post_processor)
-    def post_processor(self, value):
+    @configurable_property_setter(post_process)
+    def post_process(self, value):
+        pass
+
+    @configurable_property
+    def post_process_with_siblings(self):
+        pass
+
+    @configurable_property_setter(post_process_with_siblings)
+    def post_process_with_siblings(self, value):
         pass
 
     @configurable_property

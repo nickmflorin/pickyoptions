@@ -3,19 +3,27 @@ import six
 from pickyoptions.lib.utils import check_num_function_arguments
 from pickyoptions.configuration import Configuration
 
-from .exceptions import OptionConfigurationError
 
-
-class OptionConfiguration(Configuration):
-    exception_cls = OptionConfigurationError
-
-
-class PostProcessorConfiguration(OptionConfiguration):
+class PostProcessConfiguration(Configuration):
     def __init__(self, field):
-        super(PostProcessorConfiguration, self).__init__(field, required=False, default=None)
+        super(PostProcessConfiguration, self).__init__(field, required=False, default=None)
 
     def validate(self, value):
-        super(PostProcessorConfiguration, self).validate(value)
+        super(PostProcessConfiguration, self).validate(value)
+        if value is not None:
+            if not six.callable(value) or not check_num_function_arguments(value, 2):
+                self.raise_invalid(
+                    "Must be a callable that takes the option value as it's first "
+                    "argument and the option instance as it's second argument."
+                )
+
+
+class PostProcessWithSiblingsConfiguration(Configuration):
+    def __init__(self, field):
+        super(PostProcessWithSiblingsConfiguration, self).__init__(field, required=False, default=None)
+
+    def validate(self, value):
+        super(PostProcessWithSiblingsConfiguration, self).validate(value)
         if value is not None:
             if not six.callable(value) or not check_num_function_arguments(value, 3):
                 self.raise_invalid(
@@ -25,7 +33,7 @@ class PostProcessorConfiguration(OptionConfiguration):
                 )
 
 
-class ValidateConfiguration(OptionConfiguration):
+class ValidateConfiguration(Configuration):
     def __init__(self, field):
         super(ValidateConfiguration, self).__init__(field, required=False, default=None)
 
@@ -40,7 +48,7 @@ class ValidateConfiguration(OptionConfiguration):
                 )
 
 
-class ValidateWithOthersConfiguration(OptionConfiguration):
+class ValidateWithOthersConfiguration(Configuration):
     def __init__(self, field):
         super(ValidateWithOthersConfiguration, self).__init__(field, required=False, default=None)
 
@@ -55,7 +63,7 @@ class ValidateWithOthersConfiguration(OptionConfiguration):
                 )
 
 
-class NormalizeConfiguration(OptionConfiguration):
+class NormalizeConfiguration(Configuration):
     def __init__(self, field):
         super(NormalizeConfiguration, self).__init__(field, required=False, default=None)
 
@@ -71,9 +79,7 @@ class NormalizeConfiguration(OptionConfiguration):
                 )
 
 
-class DisplayConfiguration(OptionConfiguration):
-    exception_cls = OptionConfigurationError
-
+class DisplayConfiguration(Configuration):
     def __init__(self, field):
         super(DisplayConfiguration, self).__init__(field, required=False, default=None)
 

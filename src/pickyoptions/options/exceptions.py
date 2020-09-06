@@ -1,12 +1,7 @@
-from pickyoptions.exceptions import ValueParameterizedError, PickyOptionsUserError
-from pickyoptions.configuration.exceptions import PickyOptionsConfigurationError
-
-__all__ = (
-    'OptionsInvalidError',
-)
+from pickyoptions.exceptions import PickyOptionsError
 
 
-class OptionsError(ValueParameterizedError):
+class OptionsError(PickyOptionsError):
     """
     Abstract base class for all exceptions that are raised in reference to a specific set
     of of `obj:Options`.
@@ -15,26 +10,13 @@ class OptionsError(ValueParameterizedError):
 
 
 class OptionsNotPopulatedError(OptionsError):
-    pass
+    default_message = "The options are not yet populated."
 
 
-class OptionsUserError(OptionsError, PickyOptionsUserError):
+# TODO: Be able to include the individual errors from individual options being invalid.
+class OptionsInvalidError(OptionsError):
     """
-    Abstract base class for all exceptions that are raised in reference to a user provided
-    values to an already configured `obj:Options` instance.
+    Raised when the `obj:Options` are invalid as a whole.
     """
-    pass
-
-
-class OptionsConfigurationError(OptionsError, PickyOptionsConfigurationError):
-    """
-    Raised when the configuration provided to an `obj:Options` is invalid.
-    """
-    pass
-
-
-class OptionsInvalidError(OptionsUserError):
-    """
-    Raised when the overall `obj:Options` values are invalid as a set.
-    """
-    pass
+    identifier = "Invalid Options"
+    default_message = "The options are invalid."

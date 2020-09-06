@@ -1,42 +1,29 @@
-import functools
-
-
-def doublewrap(f):
-    '''
-    a decorator decorator, allowing the decorator to be used as:
-    @decorator(with, arguments, and=kwargs)
-    or
-    @decorator
-    '''
-    @functools.wraps(f)
-    def new_dec(*args, **kwargs):
-        if len(args) == 1 and len(kwargs) == 0 and callable(args[0]):
-            # actual decorated function
-            return f(args[0])
-        else:
-            # decorator arguments
-            return lambda realf: f(realf, *args, **kwargs)
-
-    return new_dec
+from pickyoptions import constants
+from pickyoptions.lib.utils import optional_parameter_decorator
 
 
 def configurable_property_setter(obj, configuration_name=None):
-    def _decorator(func):
+
+    def decorator(func):
+        # configuration_name = configuration_name or func.__name__
+
         @obj.setter
         def inner(instance, value):
+            # assert configuration_name in instance._configuration
             instance._configuration[func.__name__] = value
 
             # If we are not in the process of setting multiple different configurations values,
-            # we should validate after it is set.
+            # we should validate after they are all set.
             if not instance.configuring:
                 instance.validate_configuration()
         return inner
-    return _decorator
+    return decorator
 
 
-@doublewrap
+@optional_parameter_decorator
 def configurable_property(func, configuration_name=None):
     configuration_name = configuration_name or func.__name__
+
     @property
     def inner(instance):
         # Get the actual configuration object.
@@ -47,6 +34,29 @@ def configurable_property(func, configuration_name=None):
         if configuration.field in instance._configuration:
             return instance._configuration[configuration.field]
 
-        assert not configuration.required
-        return configuration.default
+        # This might be redundant, since we also do it when the configurations are populated.
+        configuration.validate_not_provided()
+
+        # This would be an error on our end, not a user error.
+        if configuration.required:
+            # This applies when the default value is None as well.
+            if configuration.default != constants.NOTSET:
+                raise Exception(
+                    "Cannot provide a default configuration value for %s if the "
+                    "configuration is required." % configuration_name
+                )
+            raise Exception("The configuration %s is required." % configuration_name)
+        else:
+            # TODO: We have to potentially revisit this, we don't want this to cause runtime
+            # errors for users which it might do if we don't set things up properly.
+            if configuration.default == "NOTSET":
+                raise Exception(
+                    "The configuration %s is not required, but no default is specified. "
+                    "The default value must be specified in the case that the configuration "
+                    "value is not provided." % configuration_name
+                )
+
+            # This can be None, as long as the default was explicitly set to None.
+            return configuration.default
+
     return inner
