@@ -11,6 +11,7 @@ class OptionError(PickyOptionsError):
 
 
 class OptionNotConfiguredError(NotConfiguredError, OptionError):
+    identifier = "Option Not Configured"
     default_message = "The option for field `{field}` is not yet configured."
 
 
@@ -19,6 +20,7 @@ class OptionNotSetError(OptionError):
     Raised when trying to access values or functionality on the `obj:Option` that require
     that the `obj:Option` was set.
     """
+    identifier = "Option Not Set"
     default_message = "The option for field `{field}` has not been set yet."
 
 
@@ -43,6 +45,7 @@ class OptionRequiredError(OptionError):
     """
     Raised when an option value is required but not specified.
     """
+    identifier = "Required Option"
     default_message = "The option for field `{field}` is required, but was not provided."
 
 

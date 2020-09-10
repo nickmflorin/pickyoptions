@@ -46,16 +46,15 @@ class Configurations(Parent, Child):
     # used?
     invalid_child_error = None
     invalid_child_type_error = None
-    child_required_error = None
+    required_child_error = None
 
     _configured = False
 
-    # Note: This will cause issues with Python3/2 Compat - we need to use **kwargs.
-    def __init__(self, *configurations, parent=None):
+    def __init__(self, *configurations, **kwargs):
         self._configuring = False
 
         Parent.__init__(self, children=list(configurations))
-        Child.__init__(self, parent=parent)
+        Child.__init__(self, parent=kwargs.get('parent'))
 
     def __repr__(self):
         return "<{cls_name} {configurations}>".format(

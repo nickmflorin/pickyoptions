@@ -17,10 +17,9 @@ logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 class Configuration(Child):
-
     invalid_child_error = ConfigurationInvalidError
     invalid_child_type_error = ConfigurationTypeError
-    child_required_error = ConfigurationRequiredError
+    required_child_error = ConfigurationRequiredError
 
     # TODO: Should we move this to the Child model?  As a cannot_update_error?
     cannot_reconfigure_error = ConfigurationCannotReconfigureError

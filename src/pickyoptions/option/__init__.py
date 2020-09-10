@@ -4,17 +4,18 @@ import six
 import sys
 
 from pickyoptions import constants, settings
-from pickyoptions.lib.utils import check_num_function_arguments
 
 from pickyoptions.base import track_init
 from pickyoptions.child import Child
-from pickyoptions.configuration import (
-    Configuration, Configurable, Configurations)
+from pickyoptions.configuration import Configuration, Configurable, Configurations
 from pickyoptions.configuration.configurations import EnforceTypesConfiguration
 from pickyoptions.configuration.exceptions import ConfigurationDoesNotExist
 from pickyoptions.configuration.utils import requires_configured
 from pickyoptions.routine import Routine, Routines
 
+from .configurations import (
+    ValidateConfiguration, ValidateWithOptionsConfiguration, NormalizeConfiguration,
+    PostProcessConfiguration, PostProcessWithOptionsConfiguration, FieldConfiguration)
 from .exceptions import (
     OptionInvalidError,
     OptionRequiredError,
@@ -26,106 +27,8 @@ from .exceptions import (
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class PostProcessConfiguration(Configuration):
-    # TODO: Maybe we should allow the default to be `None` (by default), not NOTSET.
-    def __init__(self, field):
-        super(PostProcessConfiguration, self).__init__(field, required=False, default=None)
-
-    def validate(self):
-        super(PostProcessConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 2):
-                self.raise_invalid(
-                    "Must be a callable that takes the option value as it's first "
-                    "argument and the option instance as it's second argument."
-                )
-
-
-class PostProcessWithOptionsConfiguration(Configuration):
-    # TODO: Maybe we should allow the default to be `None` (by default), not NOTSET.
-    def __init__(self, field):
-        super(PostProcessWithOptionsConfiguration, self).__init__(field, default=None)
-
-    def validate(self):
-        super(PostProcessWithOptionsConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 3):
-                self.raise_invalid(
-                    "Must be a callable that takes the option value as it's first "
-                    "argument, the option instance as it's second argument and the overall "
-                    "combined options instance as it's third argument."
-                )
-
-
-class ValidateConfiguration(Configuration):
-    # TODO: Maybe we should allow the default to be `None` (by default), not NOTSET.
-    def __init__(self, field):
-        super(ValidateConfiguration, self).__init__(field, required=False, default=None)
-
-    def validate(self):
-        super(ValidateConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 2):
-                self.raise_invalid(
-                    "Must be a callable that takes the option value as it's first "
-                    "argument and the option instance as it's second argument."
-                )
-
-
-class ValidateWithOptionsConfiguration(Configuration):
-    # TODO: Maybe we should allow the default to be `None` (by default), not NOTSET.
-    def __init__(self, field):
-        super(ValidateWithOptionsConfiguration, self).__init__(field, required=False, default=None)
-
-    def validate(self):
-        super(ValidateWithOptionsConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 3):
-                self.raise_invalid(
-                    "Must be a callable that takes the option value as it's first "
-                    "argument, the option instance as it's second argument and the overall "
-                    "combined options instance as it's third argument."
-                )
-
-
-class NormalizeConfiguration(Configuration):
-    # TODO: Maybe we should allow the default to be `None` (by default), not NOTSET.
-    def __init__(self, field):
-        super(NormalizeConfiguration, self).__init__(field, default=None)
-
-    def validate(self):
-        super(NormalizeConfiguration, self).validate()
-        if self.value is not None:
-            # TODO: Should we allow normalize to have options as the third parameter?  We could
-            # always introspect the function and pass in if applicable.
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 2):
-                self.raise_invalid(
-                    "Must be a callable that takes the option value as it's first "
-                    "argument and the option instance as it's second argument."
-                )
-
-
-class FieldConfiguration(Configuration):
-    def __init__(self, field):
-        super(FieldConfiguration, self).__init__(field, required=True, updatable=False)
-
-    def validate(self):
-        super(FieldConfiguration, self).validate()
-        if not isinstance(self.value, six.string_types):
-            self.raise_invalid_type(types=six.string_types)
-        elif self.value.startswith('_'):
-            self.raise_invalid(message="Cannot be scoped as a private attribute.")
-
-
 class Option(Configurable, Child):
     """
-    The `obj:Options` are a parent to the configuration `obj:Configuration`(s), but the
-    `obj:Option` is a child to the `obj:Options`.
-    ^^^ Note that this will make Option iterable by iterating over the configurations - not sure
-    if we want that, but we can come up with a better solution..
-    Actually, on second though, this will make the Options iterable over Configurations!  Not the
-    individual configurations...  We should probably have a subclass of ParentModel for that.
-
     TODO:
     ----
     (1) Should we maybe add a property that validates the type of value provided if it is
@@ -183,7 +86,6 @@ class Option(Configurable, Child):
         )
 
         Configurable.__init__(self, **kwargs)
-
         # The child needs to be initialized after the option is configured, because the child will
         # use the `field` value (which is configured) to uniquely identify the child.
         Child.__init__(self, parent=kwargs.pop('parent', None))
@@ -211,9 +113,6 @@ class Option(Configurable, Child):
         )
 
     def __getattr__(self, k):
-        # TODO: Should this part be moved to configurable?
-        # WARNING: This might break if there is a configuration that is named the same as an
-        # option - we should prevent that.
         assert self.configured
         try:
             configuration = getattr(self.configurations, k)

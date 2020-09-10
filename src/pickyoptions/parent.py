@@ -1,3 +1,4 @@
+from abc import ABCMeta, abstractproperty
 import logging
 import six
 import sys
@@ -11,7 +12,7 @@ from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Parent(BaseModel):
+class Parent(six.with_metaclass(ABCMeta, BaseModel)):
     """
     Mapping model.
     """
@@ -22,6 +23,14 @@ class Parent(BaseModel):
         children = children or []
         for child in children:
             self.assign_child(child)
+
+    @abstractproperty
+    def child_cls(self):
+        pass
+
+    @abstractproperty
+    def unrecognized_child_error(self):
+        pass
 
     def __getattr__(self, k):
         # TODO: Do we really want this to raise an error indicating that the option is not
@@ -47,14 +56,6 @@ class Parent(BaseModel):
         # Attribute error gets raised in DEBUG mode.
         except (self.unrecognized_child_error, AttributeError):
             return None
-    #
-    # @abstractproperty
-    # def child_cls(self):
-    #     pass
-    #
-    # @abstractproperty
-    # def unrecognized_child_error(self):
-    #     pass
 
     @property
     def children(self):
