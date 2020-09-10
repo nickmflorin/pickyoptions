@@ -3,14 +3,14 @@ import six
 
 from pickyoptions import constants, settings
 from pickyoptions.lib.utils import check_num_function_arguments, ensure_iterable
+from pickyoptions.child import Child
 
-from pickyoptions.exceptions import (
+from .exceptions import (
     ConfigurationInvalidError,
     ConfigurationRequiredError,
     ConfigurationTypeError,
     ConfigurationCannotReconfigureError
 )
-from .child import Child
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)

@@ -4,26 +4,24 @@ import six
 import sys
 
 from pickyoptions import constants, settings
-from pickyoptions.exceptions import (
+from pickyoptions.lib.utils import check_num_function_arguments
+
+from pickyoptions.base import track_init
+from pickyoptions.child import Child
+from pickyoptions.configuration import (
+    Configuration, Configurable, Configurations)
+from pickyoptions.configuration.configurations import EnforceTypesConfiguration
+from pickyoptions.configuration.exceptions import ConfigurationDoesNotExist
+from pickyoptions.configuration.utils import requires_configured
+from pickyoptions.routine import Routine, Routines
+
+from .exceptions import (
     OptionInvalidError,
     OptionRequiredError,
     OptionTypeError,
-    OptionsInvalidError,
-    OptionNotPopulatedError,
-    OptionNotSetError,
-    OptionPopulatingError,
+    # OptionNotSetError,
     OptionNotConfiguredError,
-    ConfigurationDoesNotExist,
 )
-from pickyoptions.lib.utils import check_num_function_arguments
-
-from .base import track_init
-from .child import Child
-from .configurable import Configurable, requires_configured
-from .configuration import Configuration
-from .configurations import Configurations, EnforceTypesConfiguration
-from .populating import Populating, requires_not_populating, requires_value_set
-
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
@@ -119,7 +117,7 @@ class FieldConfiguration(Configuration):
             self.raise_invalid(message="Cannot be scoped as a private attribute.")
 
 
-class Option(Configurable, Populating, Child):
+class Option(Configurable, Child):
     """
     The `obj:Options` are a parent to the configuration `obj:Configuration`(s), but the
     `obj:Option` is a child to the `obj:Options`.
@@ -141,11 +139,7 @@ class Option(Configurable, Populating, Child):
     """
     # Configurable Implementation Properties
     not_configured_error = OptionNotConfiguredError
-    not_populated_error = OptionNotPopulatedError
-    not_set_error = OptionNotSetError
-
-    # Populating Implementation Properties
-    populating_error = OptionPopulatingError
+    # not_set_error = OptionNotSetError
 
     # Child Implementation Properties
     parent_cls = 'Options'
@@ -172,6 +166,7 @@ class Option(Configurable, Populating, Child):
     def __init__(self, field, **kwargs):
         self._value = None
         self._populated_value = constants.NOTSET
+        self._set = False  # This is only applicable for the `obj:Option` right now...
 
         # Include the `field` from the arguments as a configuration.  We could of course just
         # include in the static attribute configurations, but then it would have to be provided
@@ -181,7 +176,12 @@ class Option(Configurable, Populating, Child):
             field=field
         )
 
-        Populating.__init__(self)
+        self.routines = Routines(
+            Routine(id='populating'),
+            Routine(id='overriding'),
+            Routine(id='restoring')
+        )
+
         Configurable.__init__(self, **kwargs)
 
         # The child needs to be initialized after the option is configured, because the child will
@@ -215,8 +215,13 @@ class Option(Configurable, Populating, Child):
         # WARNING: This might break if there is a configuration that is named the same as an
         # option - we should prevent that.
         assert self.configured
-        configuration = getattr(self.configurations, k)
-        return configuration.value
+        try:
+            configuration = getattr(self.configurations, k)
+        except AttributeError:
+            assert settings.DEBUG is True
+            raise AttributeError("The attribute %s does not exist on the Option instance." % k)
+        else:
+            return configuration.value
 
     def raise_invalid(self, *args, **kwargs):
         kwargs.setdefault('cls', OptionInvalidError)
@@ -273,83 +278,122 @@ class Option(Configurable, Populating, Child):
         self._value = value
         self._set = True
 
-        # Do we have to do anything fancy if the options are overridding?
+        # We do this here instead of at the end of the routines so these always run when the value
+        # is updated.
+        self.do_validate()
+        self.do_post_process()
 
-        # If the option is populating, the validation and post process will run after the
-        # population finishes.
-        if not self.populating and not self.overriding:
-            logger.debug(
-                "Applying post routine on option since it is not populating, "
-                "overriding or restoring."
-            )
-            self.post_routine()
-
-            # I think this block should be indented, but not sure yet...
+        # If the `obj:Option` is populating or overriding, the validation and post processing
+        # routines with options will be run after the routine finishes.
+        if self.routines.populating.in_progress:
+            assert self.routines.subsection(['restoring', 'overriding']).none_in_progress
+            assert self.parent.routines.populating.in_progress
+            self.routines.populating.store(value)
+        elif self.routines.overriding.in_progress:
+            assert self.routines.subsection(['restoring', 'populating']).none_in_progress
+            assert self.parent.routines.overriding.in_progress
+            self.routines.overriding.store(value)
+        elif self.routines.restoring.in_progress:
+            assert self.routines.subsection(['overriding', 'populating']).none_in_progress
+            assert self.parent.routines.restoring.in_progress
+            self.routines.restoring.store(value)
+        else:
             # If the parent `obj:Options` are not populating, we want to perform the validation/
             # post-processing routines with the populated `obj:Options`.  If the parent
             # `obj:Options` are still populating, the routines will be called after the parent
             # population finishes.
-            if not self.parent.populating and not self.parent.overriding:
-                logger.debug(
-                    "Applying post routine with options on option since it is not populating, "
-                    "overriding or restoring."
-                )
-                self.post_routine_with_options()
-
-    def override(self, value):
-        with self.overriding_routine():
-            self._overridden_value = self._value
-            self.value = value
+            assert not self.routines.any_in_progress
+            logger.debug(
+                "Applying post routine with options on option %s since it is not in the "
+                "middle of a routine." % self.identifier
+            )
+            self.post_routine_with_options()
 
     def reset(self):
         super(Option, self).reset()
         self._value = None
 
-    def populate(self, value):
-        with self.population_routine():
+    def override(self, value):
+        with self.routines.overriding(self):
             self.value = value
-            self._populated_value = value
 
-    # In the case of the options, post population requires the values are populated.  In the case
-    # of the option, post population requires that they are set.
-    # @requires_not_overriding
-    @requires_not_populating
-    @requires_value_set
-    def post_routine(self):
-        logger.debug('Performing post-routine on option %s, field = %s.' % (
-            self.__class__.__name__, self.field))
-        self.do_validate()
-        self.do_post_process()
+    def populate(self, value):
+        with self.routines.populating(self):
+            self.value = value
+
+    def restore(self):
+        with self.routines.restoring(self):
+            assert len(self.routines.populating.history) == 1
+            self.value = self.routines.populating.history[0]
 
     def post_routine_with_options(self):
-        # TODO: There is currently no post_population_with_options super().
-        # super(Option, self).post_population_with_options()
         logger.debug("Performing post routine on %s, field = %s, with parent options." % (
             self.__class__.__name__, self.field))
         self.do_validate_with_options()
         self.do_post_process_with_options()
 
     def do_post_process(self):
+        """
+        Performs post-processing of the `obj:Option` immediately after the `obj:Option` is either
+        populated, overridden or restored.  This post-processing is independent of the parent
+        `obj:Options` and thus does not wait for the associated routine of the `obj:Options` to
+        finish before being applied.
+
+        This post-processing is defined by the parameter `post_process` provided to the `obj:Option`
+        on initialization.
+
+        Since this post-processing does not reference the overall `obj:Options` instance (and is
+        performed independently of the overall `obj:Options` instance) it does not wait for the
+        `obj:Options` routine to finish, but instead is immediately called when the `obj:Option`
+        finishes populating, overriding or restoring.
+        """
         if self.post_process is not None:
             self.post_process(self.value, self)
 
     def do_post_process_with_options(self):
-        # TODO: Asserting that the parent is populated here causes issues when we want to
-        # populate the option individually.  We should figure out a way to make the following
-        # possible:
-        # >>> options = Options()
-        # >>> option = Option(..., parent=options)
-        # >>> option.populate(...)
-        assert self.parent.populated
-        assert not self.parent.populating
+        """
+        Performs post-processing of the `obj:Option` with a reference to the parent `obj:Options`
+        after the `obj:Option` has either been populated, overridden or restored AND after
+        the parent `obj:Options` have left the context of a routine.  This post-processing is
+        defined by the parameter `post_process_with_options` provided to the `obj:Option` on
+        initialization.
+
+        The routine performs operations on a group of `obj:Option`(s) simultaneously, so it is
+        necessary to  wait for the routine to finish before applying this logic so that the
+        `obj:Options` being used reflect the newest values after all the operations on the
+        individual `obj:Option`(s) finished.
+
+        TODO:
+        ----
+        - Asserting that the parent routine has finished here causes issues when we want to either
+          populate, restore or override the option individually.  We should figure out a way the
+          following possible:
+
+          >>> options = Options()
+          >>> option = Option(..., parent=options)
+          >>> option.populate(...)
+
+          In the above, the parent `obj:Options` routine will not have been triggered like it would
+          be in the case that we called options.populate().
+
+        - We used to assert that the parent population routine had finished, but this method now
+          applies to more than one routine.  We  don't know what routine is being referenced
+          for any given call, so we cannot assert that a specific routine has finished.  We should
+          build this capability in, so the methods have more context about what routine they are
+          being called in association with.
+        """
         if self.post_process_with_options is not None:
             self.post_process_with_options(self.value, self, self.parent)
 
-    def do_user_provided_validation(self, func, name, *args):
+    def _do_user_provided_validation(self, func, name, *args):
+        """
+        Applies the user provided validation method to the `obj:Option`.
+        """
+        from pickyoptions.options.exceptions import OptionsInvalidError
+
         configuration = self.configuration(name)
         try:
-            # NOTE: This passes in the defaulted value or the normalized value if either are
-            # applicable.
+            # NOTE: This accounts for the default value and the value after normalization.
             result = func(self.value, self, *args)
         except Exception as e:
             # TODO: Maybe we should lax this requirement.  The caveat is that other exceptions
@@ -376,9 +420,26 @@ class Option(Configurable, Populating, Child):
                 ))
 
     def do_validate(self):
-        # TODO: Should we also validate the normalize or the defaulted values?
-        # TODO: Checking/validating the default values should be performed in the option
-        # configuration `validate_configuration` method.
+        """
+        Performs validation of the `obj:Option` immediately after the `obj:Option` is either
+        populated, overridden or restored.  This validation is independent of the parent
+        `obj:Options` and thus does not wait for the associated routine of the `obj:Options` to
+        finish before being applied.
+
+        This validation is defined by the parameter `validate` provided to the `obj:Option`
+        on initialization.
+
+        Since this validation does not reference the overall `obj:Options` instance (and is
+        performed independently of the overall `obj:Options` instance) it does not wait for the
+        `obj:Options` routine to finish, but instead is immediately called when the `obj:Option`
+        finishes populating, overriding or restoring.
+
+        TODO:
+        ----
+        - Should we also validate the normalized and defaulted values?
+        - Checking/validating the default values should be performed in the option configuration
+          `validate_configuration` method.
+        """
         if self._value is None:
             if self.required:
                 if self.default is not None:
@@ -403,20 +464,41 @@ class Option(Configurable, Populating, Child):
                     self.raise_invalid_type()
 
         if self.validate is not None:
-            self.do_user_provided_validation(self.validate, 'validate')
+            self._do_user_provided_validation(self.validate, 'validate')
 
     def do_validate_with_options(self):
-        # TODO: Asserting that the parent is populated here causes issues when we want to
-        # populate the option individually.  We should figure out a way to make the following
-        # possible:
-        # >>> options = Options()
-        # >>> option = Option(..., parent=options)
-        # >>> option.populate(...)
-        assert self.parent.populated
-        assert not self.parent.populating
+        """
+        Performs validation of the `obj:Option` with a reference to the parent `obj:Options`
+        after the `obj:Option` has either been populated, overridden or restored AND after
+        the parent `obj:Options` have left the context of a routine.  This validation is defined
+        by the parameter `validate_with_options` provided to the `obj:Option` on initialization.
 
+        The routine performs operations on a group of `obj:Option`(s) simultaneously, so it is
+        necessary to  wait for the routine to finish before applying this logic so that the
+        `obj:Options` being used reflect the newest values after all the operations on the
+        individual `obj:Option`(s) finished.
+
+        TODO:
+        ----
+        - Asserting that the parent routine has finished here causes issues when we want to either
+          populate, restore or override the option individually.  We should figure out a way the
+          following possible:
+
+          >>> options = Options()
+          >>> option = Option(..., parent=options)
+          >>> option.populate(...)
+
+          In the above, the parent `obj:Options` routine will not have been triggered like it would
+          be in the case that we called options.populate().
+
+        - We used to assert that the parent population routine had finished, but this method now
+          applies to more than one routine.  We  don't know what routine is being referenced
+          for any given call, so we cannot assert that a specific routine has finished.  We should
+          build this capability in, so the methods have more context about what routine they are
+          being called in association with.
+        """
         if self.validate_with_options is not None:
-            self.do_user_provided_validation(
+            self._do_user_provided_validation(
                 self.validate_with_options,
                 'validate_with_options',
                 self.parent
@@ -430,8 +512,6 @@ class Option(Configurable, Populating, Child):
         hand, individual configuration validation routines are performed when the `obj:Option`
         is configured with each individual configuration value.
         """
-        # super(Option, self).validate_configuration()
-
         default_configuration = self.configurations['default']
         types_configuration = self.configurations['enforce_types']
         required_configuration = self.configurations['required']

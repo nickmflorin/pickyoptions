@@ -7,15 +7,15 @@ import six
 import sys
 
 from pickyoptions import settings
-from pickyoptions.exceptions import (
+from pickyoptions.base import BaseModel
+
+from .configurations import Configurations
+from .exceptions import (
     NotConfiguredError,
     ConfigurationInvalidError,
     ConfigurationTypeError,
     ConfigurationRequiredError
 )
-
-from .base import BaseModel
-from .configurations import Configurations
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)

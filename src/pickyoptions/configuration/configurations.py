@@ -1,8 +1,8 @@
-from pickyoptions.exceptions import ConfigurationDoesNotExist
+from pickyoptions.child import Child
+from pickyoptions.parent import Parent
 
-from .child import Child
 from .configuration import Configuration
-from .parent import Parent
+from .exceptions import ConfigurationDoesNotExist
 
 
 class EnforceTypesConfiguration(Configuration):
@@ -50,6 +50,7 @@ class Configurations(Parent, Child):
 
     _configured = False
 
+    # Note: This will cause issues with Python3/2 Compat - we need to use **kwargs.
     def __init__(self, *configurations, parent=None):
         self._configuring = False
 
@@ -115,6 +116,8 @@ class Configurations(Parent, Child):
         # Make sure no invalid configurations provided.
         for k, _ in kwargs.items():
             self.raise_if_child_missing(k)
+
+        self._configured = True
 
     @property
     def configured_configurations(self):

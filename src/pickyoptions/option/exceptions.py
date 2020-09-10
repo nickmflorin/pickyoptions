@@ -1,5 +1,5 @@
-from .base import PickyOptionsError, ObjectTypeError
-from .configuration import NotConfiguredError
+from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.configuration.exceptions import NotConfiguredError
 
 
 class OptionError(PickyOptionsError):
@@ -14,24 +14,12 @@ class OptionNotConfiguredError(NotConfiguredError, OptionError):
     default_message = "The option for field `{field}` is not yet configured."
 
 
-class OptionNotPopulatedError(OptionError):
-    """
-    Raised when trying to access values or functionality on the `obj:Option` that require
-    that the `obj:Option` was populated.
-    """
-    default_message = "The option for field `{field}` has not been populated yet."
-
-
 class OptionNotSetError(OptionError):
     """
     Raised when trying to access values or functionality on the `obj:Option` that require
     that the `obj:Option` was set.
     """
     default_message = "The option for field `{field}` has not been set yet."
-
-
-class OptionPopulatingError(OptionError):
-    default_message = "The option is still populating."
 
 
 class OptionUnrecognizedError(OptionError):

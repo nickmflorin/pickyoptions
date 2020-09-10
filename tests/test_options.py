@@ -1,8 +1,7 @@
-from copy import deepcopy
 import pytest
 
 from pickyoptions import Option, Options
-from pickyoptions.exceptions import ConfigurationTypeError
+from pickyoptions.options.exceptions import OptionsInvalidError
 
 
 def test_restore_options():
@@ -41,37 +40,38 @@ def test_populate_unspecified_unrequired_value():
     assert options.strict is True
 
 
-def test_deepcopy_option():
-    options = Options()
-    # TODO: Right now this type of methodology is not possible, but we want it to be.
-    # option = Option('width', required=False, default=0.0, enforce_types=(int, float),
-    #     parent=options)
-    # option.populate(1.0)
+def test_validate_options_on_population():
+    def validate_options(options):
+        if options.height < options.width:
+            options.raise_invalid("The height must be greater than the width.")
+
     options = Options(
-        Option('width', required=False, default=0.0, enforce_types=(int, float))
+        Option('color', default='red'),
+        Option('height', required=True, enforce_types=(int, float)),
+        Option('width', required=False, default=0.0, enforce_types=(int, float)),
+        validate=validate_options
     )
-    options.populate(width=1.0)
-    option = options.options[0]
-    new_option = deepcopy(option)
-
-    assert new_option.configured
-    assert new_option.field == 'width'
-    assert new_option.required is False
-    assert new_option.default == 0.0
-    assert new_option.enforce_types == (int, float)
-    assert new_option.populated is True
-    assert new_option.value == 1.0
+    with pytest.raises(OptionsInvalidError) as e:
+        options.populate(width=5.0, height=1.0, color='green')
+    assert str(e.value) == "Invalid Options: The height must be greater than the width."
 
 
-def test_option_default_not_of_type():
-    with pytest.raises(ConfigurationTypeError):
-        Options(
-            Option('width', required=False, default=0.0, enforce_types=(int, )),
-        )
+def test_validate_options_on_override():
+    def validate_options(options):
+        if options.height < options.width:
+            options.raise_invalid("The height must be greater than the width.")
 
+    options = Options(
+        Option('color', default='red'),
+        Option('height', required=True, enforce_types=(int, float)),
+        Option('width', required=False, default=0.0, enforce_types=(int, float)),
+        validate=validate_options
+    )
+    options.populate(width=1.0, height=4.0, color='green')
 
-def test_validate_options():
-    pass
+    with pytest.raises(OptionsInvalidError) as e:
+        options.override(width=5.0)
+    assert str(e.value) == "Invalid Options: The height must be greater than the width."
 
 
 def test_options_deepcopy():

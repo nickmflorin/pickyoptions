@@ -1,4 +1,4 @@
-from .base import PickyOptionsError, ObjectTypeError
+from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
 
 
 class ConfigurationError(PickyOptionsError):

@@ -6,8 +6,7 @@ import six
 import sys
 
 from pickyoptions import settings, constants
-
-from .base import BaseModel
+from pickyoptions.base import BaseModel
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -49,7 +48,7 @@ class Restorable(BaseModel):
 class Overriding(Restorable):
     def __init__(self):
         # Keeps track of whether or not the instance has been overridden.
-        super(Overriding, self).__init___()
+        super(Overriding, self).__init__()
         self._overridden = False
         self._overriding = False
         self._overridden_value = constants.NOTSET

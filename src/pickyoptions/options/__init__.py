@@ -5,57 +5,62 @@ import six
 import sys
 
 from pickyoptions import settings, constants
-from pickyoptions.exceptions import (
-    OptionUnrecognizedError,
-    OptionInvalidError,
-    OptionsInvalidError,
-    OptionsNotConfiguredError,
-    OptionsNotPopulatedError,
-    OptionsPopulatingError
-)
-from pickyoptions.lib.utils import check_num_function_arguments
 
-from .base import track_init
-from .configurable import Configurable, requires_configured
-from .configuration import Configuration
-from .configurations import Configurations
-from .option import Option
-from .parent import Parent
-from .populating import Populating, requires_not_populating, requires_populated
+from pickyoptions.base import track_init
+from pickyoptions.configuration import Configurable, Configuration, Configurations
+from pickyoptions.configuration.utils import requires_configured
+from pickyoptions.option import Option
+from pickyoptions.option.exceptions import OptionUnrecognizedError, OptionInvalidError
+from pickyoptions.parent import Parent
+from pickyoptions.routine import Routine, Routines
+
+from .configurations import PostProcessConfiguration, ValidateConfiguration
+from .exceptions import OptionsInvalidError, OptionsNotConfiguredError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class PostProcessConfiguration(Configuration):
-    def __init__(self, field):
-        super(PostProcessConfiguration, self).__init__(field, required=False, default=None)
+class OptionsRoutine(Routine):
+    @Routine.require_not_in_progress
+    def clear_queue(self):
+        """
+        Clears the queue of `obj:Option`(s) that were either ... in the last routine cycle
+        and triggers the post population routines on each individual `obj:Option`.
+        """
+        logger.debug("Clearing %s options from population queue." % len(self.queue))
+        for option in self.queue:
+            # We can't make this assertion now that we are using this method more generally.
+            # assert option.populated
+            # I don't think we need to call the post_routine, because that will be called when the
+            # value is set...
+            # option.post_routine()
+            # I think we need to post populate with options here, right?
+            option.post_routine_with_options()
+        super(OptionsRoutine, self).clear_queue()
 
-    def validate(self):
-        super(PostProcessConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 1):
-                self.raise_invalid(
-                    "Must be a callable that takes the options instance as it's first and "
-                    "only argument."
-                )
+    # In the case of the options, post population requires the values are populated.  In the case
+    # of the option, post population requires that they are set.
+    @Routine.require_finished
+    def post_routine(self, instance):
+        """
+        Performs routines that are meant to be performed immediately after the `obj:Options`
+        population finishes.
+
+        The overall `obj:Options` are validated and post-processed based on the user provided
+        `post_process` and `validate` configurations.
+
+        Then, because the the `obj:Options` were still populating at the time each `obj:Option`
+        was populated, even the last, the queue of populated options is cleared - as each
+        individual `obj:Option` in the queue is triggered to perform their own post population
+        routines.
+        """
+        super(OptionsRoutine, self).post_routine(instance)
+        instance.do_validate()
+        instance.do_post_process()
 
 
-class ValidateConfiguration(Configuration):
-    def __init__(self, field):
-        super(ValidateConfiguration, self).__init__(field, required=False, default=None)
-
-    def validate(self):
-        super(ValidateConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value) or not check_num_function_arguments(self.value, 1):
-                self.raise_invalid(
-                    "Must be a callable that takes the options instance as it's first and "
-                    "only argument."
-                )
-
-
-class Options(Configurable, Populating, Parent):
+class Options(Configurable, Parent):
     """
     The entry point for using pickyoptions in a project.
 
@@ -97,10 +102,6 @@ class Options(Configurable, Populating, Parent):
     """
     # Configurable Implementation Properties
     not_configured_error = OptionsNotConfiguredError
-    not_populated_error = OptionsNotPopulatedError
-
-    # Populating Implmentation Properties
-    populating_error = OptionsPopulatingError
 
     # Parent Implementation Properties
     child_cls = Option
@@ -115,18 +116,13 @@ class Options(Configurable, Populating, Parent):
 
     @track_init
     def __init__(self, *args, **kwargs):
-        # Keeps track of the `obj:Option`(s) that were set on population so the state of the
-        # `obj:Options` instance can be restored after overrides are applied.
-        # self._populated_option_values = {}
-
-        # Keeps track of which `obj:Option`(s) are in the process of being populated, so they can
-        # be cleared and post populated after the population finishes.
-        self._population_queue = []
-        self._overridden_queue = []
-
-        Populating.__init__(self)
+        self.routines = Routines(
+            OptionsRoutine(id='populating'),
+            OptionsRoutine(id='overriding'),
+            OptionsRoutine(id='restoring')
+        )
         Configurable.__init__(self, reverse_assign_configurations=False, **kwargs)
-        Parent.__init__(self, children=list(args))
+        Parent.__init__(self, children=list(args), child_value=lambda child: child.value)
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -139,23 +135,25 @@ class Options(Configurable, Populating, Parent):
     def __repr__(self):
         # We have to use the initialized property because that is set at the very fore front
         # of instantiation - populated may or may not be set at this point.
-        if self._initialized:
-            if self.populated:
-                return "<{cls_name} {params}>".format(
+        if self.initialized:
+            if self.routines.populating.finished:
+                return "<Populated {cls_name} {params}>".format(
                     cls_name=self.__class__.__name__,
                     params=", ".join(["{k}={v}".format(k=k, v=v) for k, v in self.zipped])
                 )
-            # Note: This causes problems if the options are not set as the private variable yet.
-            return "<{cls_name} UNPOPULATED [{options}]>".format(
+            return "<Unpopulated {cls_name} [{options}]>".format(
                 cls_name=self.__class__.__name__,
                 options=", ".join([option.field for option in self.children])
             )
-        return "<{cls_name} {state}>".format(
+        return "<Uninitialized {cls_name} {state}>".format(
             state=constants.NOT_INITIALIZED,
             cls_name=self.__class__.__name__
         )
 
     def __getattr__(self, k):
+        if settings.DEBUG and k.startswith('_'):
+            raise AttributeError("The %s instance does not have attribut %s." % (
+                self.__class__.__name__, k))
         # TODO: Do we need to check if it is configured here?
         # TODO: Should this part be moved to configurable?
         # WARNING: This might break if there is a configuration that is named the same as an
@@ -169,7 +167,7 @@ class Options(Configurable, Populating, Parent):
         # value of the option is returned in the super() method, because of the definition of the
         # child_value() method here.
         option_value = super(Options, self).__getattr__(k)
-        if not self.populated:
+        if not self.routines.populating.finished:
             self.raise_not_populated()
         return option_value
 
@@ -177,69 +175,33 @@ class Options(Configurable, Populating, Parent):
         self.populate(*args, **kwargs)
 
     def __setattr__(self, k, v):
-        if k.startswith('_'):
-            super(Options, self).__setattr__(k, v)
+        if not self.initialized:
+            object.__setattr__(self, k, v)
         else:
-            if self.overriding or self.populating:
-                raise ValueError()
-
-            # TODO: Do we need to check if it is configured here?
-            # TODO: Should this part be moved to configurable?
-            # WARNING: This might break if there is a configuration that is named the same as an
-            # option - we should prevent that.
-            # If the value is referring to a configuration, set the configuration value.
-            if self.configured and self.configurations.has_child(k):
-                setattr(self.configurations, k, v)
+            if self.configurations.has_child(k):
+                configuration = self.configurations[k]
+                assert configuration.configured == self.configurations.configured == self.configured
+                if self.configured:
+                    setattr(self.configurations, k, v)
+                else:
+                    self.raise_not_configured()
             else:
-                # TODO: Do we want to allow the setting of new options that are not already set?
                 option = self.get_child(k)
-
-                # NOTE: These first two conditionals aren't really necessary anymore?  It looks like
-                # if the options are overriding or populating, the option methods .populate and
-                # .override are called themselves inside the methods...
-
-                # If the `obj:Options` are populating, we will wait to do the `obj:Option`
-                # validation and post-processing with options until the `obj:Options` are done
-                # populating - otherwise, the `obj:Options` won't have the most recent values yet.
-                # We will also wait to do the validation and post-processing of the overall
-                # # `obj:Options` until they are populated, for the same reasons.
-                # if self.populating:
-                #     option.populate(v)
-                #     # Add the populated option to the queue of options populated during this
-                #     # population cycle.
-                #     assert option.field not in [opt.field for opt in self._population_queue]
-                #     self._population_queue.append(option)
-                # elif self.overriding:
-                #     option.override(v)
-                #     assert option.field not in [opt.field for opt in self._overridden_queue]
-                #     self._overridden_queue.append(option)
-                # else:
-                # The `obj:Option` will not be populating, so setting the value directly on the
-                # `obj:Option` will trigger the `obj:Option` to do validation and post-processing
-                # with the `obj:Options` instance.
                 option.value = v
                 self.do_validate()
                 self.do_post_process()
 
-    def child_value(self, child):
-        return child.value
-
     @property
     def options(self):
-        # Not stored as a separate configuration variable but still requires validation of the
-        # configuration when set/changed.
         return self._children
 
     @options.setter
     def options(self, value):
-        # Not stored as a separate configuration variable but still requires validation of the
-        # configuration when set/changed.
-        # NOTE: This would not get triggered if we were to set `children`, but `children` is not
-        # directly setable.
+        # Not stored as a separate configuration variable but it is treated as a configuration, in
+        # the sense that changing it requires re-validation of the configuration.
+        self.reset()
         self.new_children(value)
         self.validate_configuration()
-        # for option in self._options:
-        #     option._options = self
 
     def configure(self, *args, **kwargs):
         self.reset()
@@ -255,15 +217,18 @@ class Options(Configurable, Populating, Parent):
 
     def raise_invalid(self, *args, **kwargs):
         """
-        Raises an OptionsInvalidError (or an extension) for the overall `obj:Options`.
+        Raises an error to indicate that the overall `obj:Options` are invalid.
         """
         kwargs.setdefault('cls', OptionsInvalidError)
-        return self.conditional_raise(*args, **kwargs)
+        return self.raise_with_self(*args, **kwargs)
 
     def populate(self, *args, **kwargs):
         """
         Populates the configured `obj:Options` instance with values for each defined `obj:Option`.
         """
+        assert len(self.routines.populating.queue) == 0
+        self.reset()
+
         data = dict(*args, **kwargs)
 
         # Make sure that no invalid options provided.
@@ -271,30 +236,32 @@ class Options(Configurable, Populating, Parent):
             if k not in self.identifiers:
                 self.raise_no_child(field=k)
 
-        self.reset()
-        with self.population_routine():
+        with self.routines.populating(self) as routine:
             for option in self.options:
+                # Add the `obj:Option` to the queue of `obj:Option`(s) that were populated
+                # in a given routine, so we can track which options need to be post validated and
+                # post processed with the most up to date `obj:Options` when the routine finishes.
+                # This needs to happen regardless of whether or not the option is in the data.
+                assert option not in routine.queue
+                routine.add_to_queue(option)
+
                 if option.field in data:
                     option.populate(data[option.field])
-                    assert option.field not in [opt.field for opt in self._population_queue]
-                    # Add the `obj:Option` to the queue of `obj:Option`(s) that were populated
-                    # in a given routine, so the queue can be cleared and the `obj:Option`(s) in the
-                    # queue can be post routined, after the `obj:Options` are done with the routine.
-                    self._population_queue.append(option)
-                    # Keep track of the fields that were explicitly set so that they can be
-                    # reset to the originals at a later point in time.  This isn't really necessary
-                    # anymore, because the options themselves track it - nonetheless we keep track
-                    # for completeness.  This isn't really the populated value either, because the
-                    # real value would be the `obj:Options` instance.
-                    if self._populated_value == constants.NOTSET:
-                        self._populated_value = {}
-                    self._populated_value[option.field] = data[option.field]
+                    # Keep track of the options that were explicitly populated so they can be
+                    # used to reset the `obj:Options` to it's previously populated state at a later
+                    # point in time.
+                    routine.store(option)
                 else:
-                    # This will validate that the option is not required before proceeding any
-                    # further.
+                    # This will set the default on the `obj:Option` if it is not required.  It will
+                    # also validate that the option is not required before proceeding any further.
                     option.value = None
 
     def override(self, *args, **kwargs):
+        """
+        Overrides the configured `obj:Options` instance with values for each defined `obj:Option`.
+        """
+        # Note that we do not reset the overriding queue.
+        assert self.routines.overriding.queue == []
         data = dict(*args, **kwargs)
 
         # Make sure that no invalid options provided.
@@ -302,87 +269,70 @@ class Options(Configurable, Populating, Parent):
             if k not in self.identifiers:
                 self.raise_no_child(field=k)
 
-        with self.override_routine():
-            for option in self.options:
-                if option.field in data:
-                    option.override(data[option.field])
-                    assert option.field not in [opt.field for opt in self._overridden_queue]
-                    # Add the `obj:Option` to the queue of `obj:Option`(s) that were populated
-                    # in a given routine, so the queue can be cleared and the `obj:Option`(s) in the
-                    # queue can be post routined, after the `obj:Options` are done with the routine.
-                    self._overridden_queue.append(option)
-                    # Keep track of the fields that were explicitly set so that they can be
-                    # reset to the originals at a later point in time.  This isn't really necessary
-                    # anymore, because the options themselves track it - nonetheless we keep track
-                    # for completeness.  This isn't really the populated value either, because the
-                    # real value would be the `obj:Options` instance.
-                    if self._overridden_value == constants.NOTSET:
-                        self._overridden_value = {}
-                    self._overridden_value[option.field] = data[option.field]
+        with self.routines.overriding(self) as routine:
+            for k, v in data.items():
+                option = self.get_child(k)
+                option.override(v)
+                # Add the `obj:Option` to the queue of `obj:Option`(s) that were populated
+                # in a given routine, so we can track which options need to be post validated and
+                # post processed with the most up to date `obj:Options` when the routine finishes.
+                assert option not in routine.queue
+                routine.add_to_queue(option)
 
-    # In the case of the options, post population requires the values are populated.  In the case
-    # of the option, post population requires that they are set.
-    @requires_not_populating
-    @requires_populated
-    def post_population(self):
+            # Keep track of the options that were overridden AT EACH overriding routine, so the
+            # state of the `obj:Options` can be reverted back to a previous override or not overrides
+            # at all.
+            routine.store(routine.queue)
+
+    def clear_override(self):
+        pass
+
+    def clear_overrides(self, n=1):
+        pass
+
+    @Routine.require_finished(routine='populating')
+    def restore(self):
         """
-        Performs routines that are meant to be performed immediately after the `obj:Options`
-        population finishes.
+        Resets the `obj:Options` instance to it's state immediately after it was last populated.
+        Any overrides applied since the last population will be removed and the `obj:Options`
+        values will correspond to their values from the last population of the `obj:Options`
+        instance.
 
-        The overall `obj:Options` are validated and post-processed based on the user provided
-        `post_process` and `validate` configurations.
-
-        Then, because the the `obj:Options` were still populating at the time each `obj:Option`
-        was populated, even the last, the queue of populated options is cleared - as each
-        individual `obj:Option` in the queue is triggered to perform their own post population
-        routines.
+        NOTE:
+        ----
+        Since we are restoring the values back to something that already existed on the
+        `obj:Options`, the re-validation from the routine might be overkill.  However, we still
+        need the routine for the post-processing, as we want to post-process after any change
+        to the options.
         """
-        super(Options, self).post_population()
-        self.do_validate()
-        self.do_post_process()
-        self.clear_population_queue()
+        # Currently, resetting the restoring routine is not necessary/does not have an affect, but
+        # we will still do it for purposes of consistency.  Down the line, it might be important
+        # to do so.
+        self.routines.restoring.reset()
 
-    # @requires_not_overriding
-    @requires_populated
-    def post_override(self):
-        super(Options, self).post_override()
-        self.do_validate()
-        self.do_post_process()
-        self.clear_options_queue()
+        # TODO: Should we maybe just check the number of options in the override queue?
+        if not self.routines.overriding.finished or not self.routines.overriding.started:
+            logger.debug(
+                "Not restoring %s because the instance is not "
+                "overridden." % self.__class__.__name__
+            )
+            return
 
-    @requires_not_populating
-    def pre_population(self):
-        logger.debug('Performing pre-population on %s.' % self.__class__.__name__)
-        super(Options, self).pre_population()
-        assert self._options_queue == []  # ??
-        self._options_queue = []
+        # Do we really want to use the population cycle here?  There has got to be a cleaner
+        # way of doing that.
+        with self.routines.restoring(self) as routine:
+            for option in self.routines.overriding.history:
+                # Note:  We can't simply reset the options and reapply the last populated
+                # options because the reset removes the populated options.  This is why we should
+                # keep a queue of the populated options in memory.  WHAT?
+                option.restore()
 
-    # @requires_not_restoring
-    # @requires_not_overriding
-    @requires_not_populating
-    def clear_options_queue(self):
-        """
-        Clears the queue of `obj:Option`(s) that were either ... in the last routine cycle
-        and triggers the post population routines on each individual `obj:Option`.
-        """
-        logger.debug("Clearing %s options from population queue." % len(self._population_queue))
-        for option in self._options_queue:
-            # We can't make this assertion now that we are using this method more generally.
-            # assert option.populated
-            option.post_routine()
-            # I think we need to post populate with options here, right?
-            option.post_routine_with_options()
-        self._options_queue = []
+                # I don't think we really need to do this, but for completeness sake we will.
+                routine.add_to_queue(option)
+                # I don't think we really need to do this, but for completeness sake we will.
+                routine.store(option)
 
-    # @requires_not_overriding
-    # def clear_overridden_queue(self):
-    #     logger.debug("Clearing %s options from overridden queue." % len(self._overridden_queue))
-    #     for option in self._overridden_queue:
-    #         assert option.overridden
-    #         option.post_routine()
-    #         # I think we need to post populate with options here, right?
-    #         option.post_routine_with_options()
-    #     self._population_queue = []
+        self.routines.overriding.clear_history()
 
     def reset(self):
         """
@@ -394,45 +344,9 @@ class Options(Configurable, Populating, Parent):
         instance.  This is because potentially required options will not be set anymore, so
         we cannot access their values until they are set.
         """
-        super(Options, self).reset()
-        # Do these assertions make sense?  We clear the queues when the routines are finished...
-        assert self._options_queue == []
+        self.routines.reset()
 
-    @requires_populated
-    def restore(self):
-        """
-        Resets the `obj:Options` instance to it's state immediately after it was last populated.
-        Any overrides applied since the last population will be removed and the `obj:Options`
-        values will correspond to their values from the last population of the `obj:Options`
-        instance.
-        """
-        if not self.overridden:
-            logger.debug(
-                "Not restoring %s because the instance is not "
-                "overridden." % self.__class__.__name__
-            )
-            return
-
-        # Do we really want to use the population cycle here?  There has got to be a cleaner
-        # way of doing that.
-        with self.population_routine():
-            for option in self.options:
-                # Note:  We can't simply reset the options and reapply the last populated
-                # options because the reset removes the populated options.  This is why we should
-                # keep a queue of the populated options in memory.
-                if option.field in self._overrides:
-                    # The option need not be in the populated options, since the override
-                    # could have been applied to a default value.  In this case, we have to
-                    # remove from the mapping.
-                    if option.field not in self._populated_option_values:
-                        assert option.required is False
-                        # TODO: Implement __delattr__ method and __delitem__ method?
-                        del self._mapping[option.field]
-                    else:
-                        setattr(self, option.field, self._populated_options[option.field])
-        self._overrides = {}
-
-    @requires_populated
+    @Routine.require_finished(routine='populating')
     def do_validate(self):
         """
         Validates the overall `obj:Options` instance (after the children `obj:Option`(s) are fully
@@ -495,9 +409,13 @@ class Options(Configurable, Populating, Parent):
             try:
                 result = configuration.value(self)
             except Exception as e:
+                # This is very problematic, because we can't tell the difference between
+                # actual errors and errors that were intentionally raised.  We should fix this...
                 if isinstance(e, (OptionsInvalidError, OptionInvalidError)):
                     six.reraise(*sys.exc_info())
                 else:
+                    if settings.DEBUG:
+                        six.reraise(*sys.exc_info())
                     configuration.raise_invalid(
                         message=(
                             "If raising an exception to indicate that the options are invalid, "
@@ -519,7 +437,7 @@ class Options(Configurable, Populating, Parent):
                         )
                     self.raise_invalid(message=result)
 
-    @requires_populated
+    @Routine.require_finished(routine='populating')
     def do_post_process(self, children=None):
         """
         Performs the post-process routine for the overall `obj:Options` instance (after the
@@ -547,7 +465,7 @@ class Options(Configurable, Populating, Parent):
             logger.debug("Post processing options")
             self.post_process(self)
 
-    @requires_populated
+    @Routine.require_finished(routine='populating')
     def local_override(self, func):
         """
         Decorator for functions that allows the global options to be temporarily overridden while

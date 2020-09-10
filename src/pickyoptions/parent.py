@@ -3,10 +3,9 @@ import six
 import sys
 
 from pickyoptions import settings
+from pickyoptions.base import BaseModel
+from pickyoptions.child import Child
 from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
-
-from .base import BaseModel
-from .child import Child
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -16,8 +15,10 @@ class Parent(BaseModel):
     """
     Mapping model.
     """
-    def __init__(self, children=None):
+    def __init__(self, children=None, child_value=None):
         self._children = []
+        self._child_value = child_value
+
         children = children or []
         for child in children:
             self.assign_child(child)
@@ -120,7 +121,9 @@ class Parent(BaseModel):
             raise ValueError("Invalid Child")
 
     def child_value(self, child):
-        return child
+        if self._child_value is None:
+            return child
+        return self._child_value(child)
 
     @property
     def identifiers(self):
