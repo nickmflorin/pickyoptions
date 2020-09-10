@@ -1,4 +1,5 @@
 from copy import deepcopy
+import six
 
 
 __all__ = (
@@ -27,10 +28,13 @@ def ensure_iterable(value, cast=list):
     Ensures that the value is an iterable.  If the provided value is not an iterable, it will
     return an iterable with the provided value as the first element.
     """
-    if hasattr(value, '__iter__') and not isinstance(value, type):
+    if value is None:
+        return cast()
+    elif hasattr(value, '__iter__') and not isinstance(value, (type, six.string_types)):
         return value
-    value = (value, )
-    return cast(value)
+    else:
+        value = (value, )
+        return cast(value)
 
 
 def merge_dicts(dicts):

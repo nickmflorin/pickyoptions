@@ -1,4 +1,4 @@
-from pickyoptions.lib.utils import ensure_iterable
+from pickyoptions.lib.utils import ensure_iterable, is_null
 
 
 class PickyOptionsError(Exception):
@@ -31,14 +31,17 @@ class PickyOptionsError(Exception):
         for k in self._injectable_arguments:
             if "{%s}" % k in message:
                 injection[k] = getattr(self, k)
-        return message.format(**injection)
+        try:
+            return message.format(**injection)
+        except KeyError:
+            import ipdb; ipdb.set_trace()
 
     @property
     def _injectable_message(self):
         injectables = []
         for argument in self._injectable_arguments:
             value = getattr(self, argument, None)
-            if value is not None and "{%s}" % argument not in self.message:
+            if not is_null(value) and "{%s}" % argument not in self.message:
                 injectables.append((argument, value))
         if injectables:
             return "(%s)" % ", ".join([
@@ -74,11 +77,15 @@ class ObjectTypeError(PickyOptionsError):
     not of that type.
     """
     def __init__(self, *args, **kwargs):
-        kwargs['types'] = ensure_iterable(kwargs['types'])
+        kwargs['types'] = ensure_iterable(kwargs.get('types'))
         super(ObjectTypeError, self).__init__(*args, **kwargs)
 
     @property
     def default_message(self):
+        if len(self.types) != 0:
+            if getattr(self, 'field', None) is not None:
+                return "The field `{field}` must be of type {types}."
+            return "Must be of type {types}."
         if getattr(self, 'field', None) is not None:
-            return "The field {field} must be an instance of {types}."
-        return "Must be an instance of {types}."
+            return "The field `{field}` is not of the correct type."
+        return "Invalid type."

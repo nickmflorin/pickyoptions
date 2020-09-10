@@ -1,4 +1,5 @@
-from pickyoptions.exceptions import PickyOptionsError
+from .base import PickyOptionsError
+from .configuration import NotConfiguredError
 
 
 class OptionsError(PickyOptionsError):
@@ -9,8 +10,20 @@ class OptionsError(PickyOptionsError):
     pass
 
 
+class OptionsNotConfiguredError(NotConfiguredError, OptionsError):
+    default_message = "The options are not yet configured."
+
+
 class OptionsNotPopulatedError(OptionsError):
     default_message = "The options are not yet populated."
+
+
+class OptionsPopulatingError(OptionsError):
+    default_message = "The options are still populating."
+
+
+class OptionsNotPopulatingError(OptionsError):
+    default_message = "The options are not populating."
 
 
 # TODO: Be able to include the individual errors from individual options being invalid.
