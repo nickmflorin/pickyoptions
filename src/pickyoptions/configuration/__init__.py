@@ -94,11 +94,13 @@ class Configuration(Child, SimpleConfigurable):
     invalid_child_type_error = ConfigurationTypeError
     required_child_error = ConfigurationRequiredError
     child_not_set_error = ConfigurationNotSetError
+    child_locked_error = ConfigurationLockedError
+
     parent_cls = 'Configurations'
     child_identifier = 'field'
 
     # SimpleConfigurable Implementation Properties
-    cannot_reconfigure_error = ConfigurationCannotReconfigureError
+    # cannot_reconfigure_error = ConfigurationCannotReconfigureError
     not_configured_error = ConfigurationNotConfiguredError
     configuring_error = ConfigurationConfiguringError
 

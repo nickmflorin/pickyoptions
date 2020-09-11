@@ -8,7 +8,7 @@ class OptionError(PickyOptionsError):
     Abstract base class for all exceptions that are raised in reference to a
     specific `obj:Option`.
     """
-    pass
+    identifier = "Option Error"
 
 
 class OptionNotConfiguredError(NotConfiguredError, OptionError):
@@ -24,6 +24,13 @@ class OptionCannotReconfigureError(CannotReconfigureError, OptionError):
 class OptionConfiguringError(ConfiguringError, OptionError):
     identifier = "Option Configuring Error"
     default_message = "The option for field `{field}` is already configuring."
+
+
+class OptionLockedError(OptionError):
+    default_message = (
+        "The option for field `{field}` is locked and thus cannot be "
+        "changed after it's initial population."
+    )
 
 
 class OptionNotSetError(OptionError):

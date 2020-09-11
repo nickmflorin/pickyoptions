@@ -73,6 +73,7 @@ class Option(Configurable, Child):
         Configuration('default', default=constants.NOTSET),
         Configuration('required', types=(bool, ), default=False),
         Configuration('allow_null', types=(bool, ), default=True),
+        Configuration('locked', types=(bool, ), default=False),
         EnforceTypesConfiguration('enforce_types'),
         CallableConfiguration(
             'validate',
