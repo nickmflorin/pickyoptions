@@ -41,11 +41,13 @@ class BaseModel(object):
 
         strict = kwargs.pop('strict', None)
         level = kwargs.pop('level', logging.ERROR)
+        return_exception = kwargs.pop('return_exception', False)
 
         exc = cls(*args, **kwargs)
-
         if strict is False:
             logger.log(level, "%s" % exc)
             return exc
-
-        raise cls(*args, **kwargs)
+        elif return_exception:
+            return exc
+        else:
+            raise exc

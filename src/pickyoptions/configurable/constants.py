@@ -1,0 +1,4 @@
+class ConfigurationState(object):
+    NOT_CONFIGURED = "NOT_CONFIGURED"
+    CONFIGURED = "CONFIGURED"
+    CONFIGURING = "CONFIGURING"

@@ -11,19 +11,19 @@ except ImportError:
     from inspect import getargspec
 
 
-def check_num_function_arguments(func, num_arguments=0):
+def get_num_function_arguments(func):
     if six.PY3:
         sig = signature(func)
-        return len(sig.parameters) == num_arguments
+        return len(sig.parameters)
     else:
         spec = getargspec(func)
-        return len(spec.args) == num_arguments
+        return len(spec.args)
 
 
 def optional_parameter_decorator(f):
     """
-    A decorator for a decorator, allowing the decorator to be used both with and without
-    arguments applied.
+    A decorator for a decorator, allowing the decorator to be used both with
+    and without arguments applied.
 
     Example:
     ------
@@ -36,6 +36,7 @@ def optional_parameter_decorator(f):
             # Return the actual decorated function.
             return f(args[0])
         else:
-            # Wrap the function in a decorator in the case that arguments are applied.
+            # Wrap the function in a decorator in the case that arguments are
+            # applied.
             return lambda realf: f(realf, *args, **kwargs)
     return wrapped_decorator

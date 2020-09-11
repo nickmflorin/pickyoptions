@@ -10,8 +10,13 @@ class PickyOptionsError(Exception):
     def __init__(self, *args, **kwargs):
         super(PickyOptionsError, self).__init__()
         self._injectable_arguments = []
+        self._children = kwargs.get('children', [])
+        self._numbered_children = kwargs.get('numbered_children', True)
+        self._indent_children = kwargs.get('indent_children', "--> ")
+        self._child_format = kwargs.get('children_format')
 
-        self.identifier = kwargs.pop('identifier', getattr(self, 'identifier', None))
+        self.identifier = kwargs.pop('identifier',
+            getattr(self, 'identifier', None))
 
         for k, v in kwargs.items():
             if k != 'message':
@@ -23,7 +28,8 @@ class PickyOptionsError(Exception):
                 getattr(self, 'default_message'))
         except AttributeError:
             raise AttributeError(
-                "Must provide the exception message or set a default on the class."
+                "Must provide the exception message or set a default on the "
+                "class."
             )
 
     def _inject_message_parameters(self, message):
@@ -31,10 +37,10 @@ class PickyOptionsError(Exception):
         for k in self._injectable_arguments:
             if "{%s}" % k in message:
                 injection[k] = getattr(self, k)
-        try:
-            return message.format(**injection)
-        except KeyError:
-            import ipdb; ipdb.set_trace()
+        # Note: This can raise KeyError's if there are references to {...} in
+        # the string message but the parameter defined is not provided.  We
+        # should figure out a way around this.
+        return message.format(**injection)
 
     @property
     def _injectable_message(self):
@@ -45,8 +51,8 @@ class PickyOptionsError(Exception):
                 injectables.append((argument, value))
         if injectables:
             return "(%s)" % ", ".join([
-                "%s = %s" % (argument, value)
-                for argument, value in injectables
+                "%s = %s" % (argument, v)
+                for argument, v in injectables
             ]) + " " + self.message
         return self.message
 
@@ -55,14 +61,37 @@ class PickyOptionsError(Exception):
         return self._inject_message_parameters(self._injectable_message)
 
     @property
+    def _formatted_children(self):
+        formatted_children = []
+        for i, child in enumerate(self._children):
+            formatted_child = "%s" % child
+            if self._child_format:
+                formatted_child = self._child_format(formatted_child)
+            if self._numbered_children:
+                formatted_child = "(%s) %s" % (i + 1, self._children[i])
+            if self._indent_children:
+                formatted_child = "%s%s" % self._indent_children
+        return "\n".join(formatted_children)
+
+    @property
+    def has_children(self):
+        return len(self._children) != 0
+
+    def append(self, e):
+        self._children.append(e)
+
+    @property
     def message(self):
         return self._message
 
     @property
     def full_message(self):
         if self.identifier is not None:
-            return "%s: %s" % (self.identifier, self._injected_message)
-        return self._injected_message
+            return (
+                "%s: %s" % (self.identifier, self._injected_message)
+                + self._formatted_children
+            )
+        return self._injected_message + self._formatted_children
 
     def __str__(self):
         return self.full_message
@@ -73,8 +102,8 @@ class PickyOptionsError(Exception):
 
 class ObjectTypeError(PickyOptionsError):
     """
-    Raised when an option user provided value is required to be of a specific type but is
-    not of that type.
+    Raised when an option user provided value is required to be of a specific
+    type but is not of that type.
     """
     def __init__(self, *args, **kwargs):
         kwargs['types'] = ensure_iterable(kwargs.get('types'))
@@ -89,3 +118,7 @@ class ObjectTypeError(PickyOptionsError):
         if getattr(self, 'field', None) is not None:
             return "The field `{field}` is not of the correct type."
         return "Invalid type."
+
+
+class ParentHasChildError(PickyOptionsError):
+    default_message = "The parent already has the child in it's children."

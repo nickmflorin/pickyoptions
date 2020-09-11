@@ -1,7 +1,6 @@
 from copy import deepcopy
 
 
-# Do we need to implement deepcopy here?
 class Routines(list):
     def __init__(self, *args):
         list.__init__(self, list(args))
@@ -27,14 +26,15 @@ class Routines(list):
         try:
             return [routine for routine in self if routine.id == id][0]
         except IndexError:
-            raise AttributeError("Attribute %s does not exist in %s instance." % (
-                id, self.__class__.__name__))
+            raise AttributeError(
+                "The routine %s does not exist in %s instance."
+                % (id, self.__class__.__name__)
+            )
 
     def clear_queue(self):
         for routine in self:
             routine.clear_queue()
 
-    # TODO: When is this called?
     def reset(self):
         for routine in self:
             routine.reset()

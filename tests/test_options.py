@@ -21,6 +21,26 @@ def test_restore_options():
     assert options.color == 'blue'
 
 
+def test_restore_options_multiple_overrides():
+    options = Options(
+        Option('color', default='red'),
+        Option('height', required=True, enforce_types=(int, float)),
+        Option('width', required=False, default=0.0, enforce_types=(int, float))
+    )
+    options.populate(color='blue', height=2.0)
+
+    options.override(color='red')
+    options.override(color='green', height=10.0)
+    options.override(width=2.0)
+
+    options.restore()
+    assert dict(options) == {
+        'color': 'blue',
+        'height': 2.0,
+        'width': 0.0,
+    }
+
+
 def test_populate_unspecified_unrequired_value():
     options = Options(
         Option('color', default='red'),

@@ -3,10 +3,37 @@ import pytest
 
 from pickyoptions import Option, Options
 from pickyoptions.configuration.exceptions import ConfigurationTypeError
+from pickyoptions.option.exceptions import OptionNotSetError
+
+
+def test_get_option_value_option_not_set():
+    options = Options(
+        Option('color', default='red'),
+        Option('height', required=True, enforce_types=(int, float)),
+        Option('width', required=False, default=0.0, enforce_types=(int, float))
+    )
+    option = options.get_option('color')
+    with pytest.raises(OptionNotSetError) as e:
+        option.value
+    assert e.value.field == 'color'
+
+
+def test_default_option():
+    options = Options(
+        Option('color', default='red'),
+        Option('height', required=True, enforce_types=(int, float)),
+        Option('width', required=False, default=0.0, enforce_types=(int, float))
+    )
+    options.populate(height=1.0)
+    option = options.get_option('color')
+    assert option.defaulted is True
+
+    options.reset()
+    options.populate(color='green', height=1.0)
+    assert option.defaulted is False
 
 
 def test_deepcopy_option():
-    options = Options()
     options = Options(
         Option('width', required=False, default=0.0, enforce_types=(int, float))
     )

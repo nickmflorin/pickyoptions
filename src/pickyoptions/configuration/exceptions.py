@@ -1,24 +1,35 @@
 from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.configurable.exceptions import (
+    NotConfiguredError, CannotReconfigureError, ConfiguringError)
 
 
 class ConfigurationError(PickyOptionsError):
     """
-    Base class for exceptions that are raised during configuration of the options or option.
+    Base class for exceptions that are raised during configuration of the
+    options or option.
     """
     identifier = "Configuration Error"
 
 
-class NotConfiguredError(ConfigurationError):
-    pass
+class ConfigurationNotConfiguredError(NotConfiguredError, ConfigurationError):
+    default_message = "The configuration for `{field}` has not been configured."
 
 
-class ConfigurationDoesNotExist(ConfigurationError):
-    default_message = "Configuration for `{field}` does not exist."
-
-
-class ConfigurationCannotReconfigureError(ConfigurationError):
+class ConfigurationCannotReconfigureError(CannotReconfigureError,
+        ConfigurationError):
     default_message = (
-        "The configuration for `{field}` has already been configured and cannot be reconfigured.")
+        "The configuration for `{field}` has already been configured and "
+        "cannot be reconfigured."
+    )
+
+
+class ConfigurationConfiguringError(ConfiguringError, ConfigurationError):
+    default_message = (
+        "The configuration for field `{field}` is already configuring.")
+
+
+class ConfigurationNotSetError(ConfigurationError):
+    default_message = "The configuration for field `{field}` has not been set."
 
 
 class ConfigurationInvalidError(ConfigurationError):
@@ -30,7 +41,8 @@ class ConfigurationInvalidError(ConfigurationError):
 
 
 class ConfigurationRequiredError(ConfigurationError):
-    default_message = "The configuration `{field}` is required but was not provided."
+    default_message = (
+        "The configuration `{field}` is required but was not provided.")
 
 
 class ConfigurationTypeError(ObjectTypeError, ConfigurationInvalidError):

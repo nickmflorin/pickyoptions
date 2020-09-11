@@ -1,11 +1,12 @@
 from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
-from pickyoptions.configuration.exceptions import NotConfiguredError
+from pickyoptions.configuration.exceptions import (
+    NotConfiguredError, CannotReconfigureError, ConfiguringError)
 
 
 class OptionError(PickyOptionsError):
     """
-    Abstract base class for all exceptions that are raised in reference to a specific
-    `obj:Option`.
+    Abstract base class for all exceptions that are raised in reference to a
+    specific `obj:Option`.
     """
     pass
 
@@ -15,10 +16,20 @@ class OptionNotConfiguredError(NotConfiguredError, OptionError):
     default_message = "The option for field `{field}` is not yet configured."
 
 
+class OptionCannotReconfigureError(CannotReconfigureError, OptionError):
+    identifier = "Option Cannot Reconfigure"
+    default_message = "The option for field `{field}` cannot be reconfigured."
+
+
+class OptionConfiguringError(ConfiguringError, OptionError):
+    identifier = "Option Configuring Error"
+    default_message = "The option for field `{field}` is already configuring."
+
+
 class OptionNotSetError(OptionError):
     """
-    Raised when trying to access values or functionality on the `obj:Option` that require
-    that the `obj:Option` was set.
+    Raised when trying to access values or functionality on the `obj:Option`
+    that require that the `obj:Option` was set.
     """
     identifier = "Option Not Set"
     default_message = "The option for field `{field}` has not been set yet."
@@ -26,8 +37,8 @@ class OptionNotSetError(OptionError):
 
 class OptionUnrecognizedError(OptionError):
     """
-    Raised when a provided option is not recognized - this means that it was never configured
-    as a part of the `obj:Options`.
+    Raised when a provided option is not recognized - this means that it was
+    never configured as a part of the `obj:Options`.
     """
     identifier = "Unrecognized Option"
     default_message = "There is no configured option for field `{field}`."
@@ -35,7 +46,8 @@ class OptionUnrecognizedError(OptionError):
 
 class OptionInvalidError(OptionError):
     """
-    Base class for all exceptions that are raised when a an option value is invalid.
+    Base class for all exceptions that are raised when a an option value is
+    invalid.
     """
     default_message = "The option for field `{field}` is invalid."
     identifier = "Invalid Option"
@@ -46,12 +58,14 @@ class OptionRequiredError(OptionError):
     Raised when an option value is required but not specified.
     """
     identifier = "Required Option"
-    default_message = "The option for field `{field}` is required, but was not provided."
+    default_message = (
+        "The option for field `{field}` is required, but was not provided.")
 
 
 class OptionTypeError(ObjectTypeError, OptionInvalidError):
     """
-    Raised when an option value is required to be of a specific type but is not of that type.
+    Raised when an option value is required to be of a specific type but is not
+    of that type.
     """
     @property
     def default_message(self):

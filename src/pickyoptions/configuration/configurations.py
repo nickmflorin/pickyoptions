@@ -1,8 +1,53 @@
-from pickyoptions.child import Child
-from pickyoptions.parent import Parent
+import six
 
-from .configuration import Configuration
-from .exceptions import ConfigurationDoesNotExist
+from pickyoptions.lib.utils import get_num_function_arguments
+from . import Configuration
+
+
+class CallableConfiguration(Configuration):
+    def __init__(self, field, num_arguments=None, error_message=None):
+        super(CallableConfiguration, self).__init__(field, required=False,
+            default=None)
+        self._num_arguments = num_arguments
+        self._error_message = error_message or "Must be a callable."
+
+    @property
+    def num_arguments(self):
+        return self._num_arguments
+
+    @property
+    def error_message(self):
+        default_message = "Must be a callable."
+        if self.num_arguments is not None:
+            default_message = (
+                "Must be a callable that takes %s arguments."
+                % self.num_arguments
+            )
+        return self._error_message or default_message
+
+    def validate(self):
+        super(CallableConfiguration, self).validate()
+        if self.value is not None:
+            if not six.callable(self.value):
+                self.raise_invalid(self.error_message)
+            elif self.num_arguments is not None:
+                num_found_arguments = get_num_function_arguments(self.value)
+                if num_found_arguments != self.num_arguments:
+                    self.raise_invalid(self.error_message)
+
+
+class FieldConfiguration(Configuration):
+    def __init__(self, field):
+        super(FieldConfiguration, self).__init__(field, required=True,
+            updatable=False)
+
+    def validate(self):
+        super(FieldConfiguration, self).validate()
+        if not isinstance(self.value, six.string_types):
+            self.raise_invalid_type(types=six.string_types)
+        elif self.value.startswith('_'):
+            self.raise_invalid(
+                message="Cannot be scoped as a private attribute.")
 
 
 class EnforceTypesConfiguration(Configuration):
@@ -25,103 +70,11 @@ class EnforceTypesConfiguration(Configuration):
 
     def conforms_to(self, value):
         """
-        Checks whether or not the provided value conforms to the types specified by
-        this configuration.
+        Checks whether or not the provided value conforms to the types
+        specified by this configuration.
         """
         if self.value is not None:
             assert type(self.value) is tuple
             if value is None or not isinstance(value, self.value):
                 return False
         return True
-
-
-class Configurations(Parent, Child):
-    parent_cls = ('Options', 'Option')
-    child_identifier = "field"
-    child_cls = Configuration
-
-    unrecognized_child_error = ConfigurationDoesNotExist
-
-    # These are required to get the ABCMeta to work, but I don't think they will ever be
-    # used?
-    invalid_child_error = None
-    invalid_child_type_error = None
-    required_child_error = None
-
-    _configured = False
-
-    def __init__(self, *configurations, **kwargs):
-        self._configuring = False
-
-        Parent.__init__(self, children=list(configurations))
-        Child.__init__(self, parent=kwargs.get('parent'))
-
-    def __repr__(self):
-        return "<{cls_name} {configurations}>".format(
-            configurations=self.children,
-            cls_name=self.__class__.__name__
-        )
-
-    @property
-    def configured(self):
-        return self._configured
-
-    @property
-    def configuring(self):
-        return self._configuring
-
-    def __getattr__(self, k):
-        # TODO: Do we need to check if it is configured here?
-        # TODO: Should this part be moved to configurable?
-        # WARNING: This might break if there is a configuration that is named the same as an
-        # option - we should prevent that.
-        # If the value is referring to a configuration, return the configuration value.
-        # TODO: Configurations should probably have a configure value...
-        # TODO: We should start merging Configurable with Configurations.
-        configuration = super(Configurations, self).__getattr__(k)
-        # Keep these as sanity checks for the time being - although this logic is likely
-        # duplicate and should be removed.
-        if configuration.required:
-            assert not configuration.default_set
-            assert configuration.configured
-        return configuration
-
-    # TODO: Maybe move the validate configuration methods to the Configurations level so that
-    # when a configuration is set, the overall configurations can be validated.
-    def __setattr__(self, k, v):
-        if k.startswith('_'):
-            super(Configurations, self).__setattr__(k, v)
-        else:
-            configuration = self[k]
-            # Make sure that the configuration can be reconfigured.
-            if not configuration.updatable:
-                configuration.raise_cannot_reconfigure()
-
-            configuration.configure(v)
-            # Validate the overall configuration after the configuration is set.
-            self.parent.validate_configuration()
-
-    def configure(self, **kwargs):
-        for field, configuration in self:
-            if field in kwargs:
-                # This will set the configuration as being configured - since the value
-                # was explicitly provided.
-                configuration.configure(kwargs[field])
-            else:
-                # This will validate that the configuration is not required before going
-                # any further, but will not set the configuration as being configured.
-                configuration.value = None
-
-        # Make sure no invalid configurations provided.
-        for k, _ in kwargs.items():
-            self.raise_if_child_missing(k)
-
-        self._configured = True
-
-    @property
-    def configured_configurations(self):
-        data = {}
-        for k, configuration in self:
-            if configuration.configured:
-                data[k] = configuration.value
-        return data

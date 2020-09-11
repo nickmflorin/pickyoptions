@@ -41,8 +41,8 @@ class Routine(BaseModel):
             six.reraise(*sys.exc_info())
         else:
             self._state = RoutineState.FINISHED
-            # Populated will only be False before the first population, afterwards it will always
-            # be True, until the options are reset.
+            # Populated will only be False before the first population,
+            # afterwards it will always be True, until the options are reset.
             # self._populated = True
             # self._populated_value = constants.NOTSET
 

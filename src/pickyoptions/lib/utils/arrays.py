@@ -16,7 +16,11 @@ def flatten(arrays, ignore_types=None, cast=list):
     flattened = []
     ignore_types = ensure_iterable(ignore_types or [])
     for array in arrays:
-        if hasattr(array, '__iter__') and type(array) not in ignore_types and type(array) is not str:
+        if (
+            hasattr(array, '__iter__')
+            and type(array) not in ignore_types
+            and type(array) is not str
+        ):
             flattened += list(array)
         else:
             flattened.append(array)
@@ -25,12 +29,16 @@ def flatten(arrays, ignore_types=None, cast=list):
 
 def ensure_iterable(value, cast=list):
     """
-    Ensures that the value is an iterable.  If the provided value is not an iterable, it will
-    return an iterable with the provided value as the first element.
+    Ensures that the value is an iterable.  If the provided value is not an
+    iterable, it will return an iterable with the provided value as the first
+    element.
     """
     if value is None:
         return cast()
-    elif hasattr(value, '__iter__') and not isinstance(value, (type, six.string_types)):
+    elif (
+        hasattr(value, '__iter__')
+        and not isinstance(value, (type, six.string_types))
+    ):
         return value
     else:
         value = (value, )
@@ -39,8 +47,8 @@ def ensure_iterable(value, cast=list):
 
 def merge_dicts(dicts):
     """
-    Merges an array of `obj:dict` instances together by copying the first `obj:dict` in the array
-    and merging the subsequent ones.
+    Merges an array of `obj:dict` instances together by copying the first
+    `obj:dict` in the array and merging the subsequent ones.
     """
     if len(dicts) == 0:
         return {}
