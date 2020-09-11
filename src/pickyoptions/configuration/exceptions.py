@@ -50,7 +50,8 @@ class ConfigurationTypeError(ObjectTypeError, ConfigurationInvalidError):
     def default_message(self):
         if len(self.types) != 0:
             if getattr(self, 'field', None) is not None:
-                return "The configuration field `{field}` must be of type {types}."
+                return (
+                    "The configuration field `{field}` must be of type {types}.")
             return "The configuration must be of type {types}."
         if getattr(self, 'field', None) is not None:
             return "The configuration `{field}` is not of the correct type."

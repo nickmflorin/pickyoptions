@@ -1,7 +1,6 @@
 import logging
-import six
 
-from pickyoptions.lib.utils import get_num_function_arguments, ensure_iterable
+from pickyoptions.lib.utils import ensure_iterable
 
 from pickyoptions import constants, settings
 from pickyoptions.utils import accumulate_errors
@@ -23,9 +22,73 @@ from .exceptions import (
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-# TODO: Consider using Configuration recursively...
 class Configuration(Child, SimpleConfigurable):
+    """
+    Represents a single configurable value in a set of `obj:Configurations`
+    for either a `obj:Option` or the set of `obj:Options`.
 
+    Parameters:
+    ----------
+    field: `obj:str` (required)
+        A string identifier for the `obj:Configuration`.  This property will
+        be used to access the `obj:Configuration` from the grouped
+        `obj:Configurations` instance.
+
+    default: `obj:object` (optional)
+        The default value for the `obj:Configuration` if the `obj:Configuration`
+        is not required and a value is not provided.
+
+        Default: NOTSET (or None publically)
+
+    types: `obj:tuple` or `obj:list` (optional)
+        The types that the value of the `obj:Configuration` should be forced to
+        comply with.  If provided and the value provided for the
+        `obj:Configuration` is not of those types, an exception will be raised.
+
+        Default: ()
+
+    required: `obj:bool` (optional)
+        Whether or not the `obj:Configuration` is required.  If True and the
+        value is not provided for the `obj:Configuration`, an exception will be
+        raised.
+
+        Default: False
+
+    validate: `obj:func` (optional)
+        A validation method that determines whether or not the value provided
+        for the `obj:Configuration` is valid.  The provided method must take the
+        `obj:Configuration` value as it's first and only argument.
+
+        It is important to note that the validate method will be applied to
+        both the provided configuration value and it's default - so both must
+        comply.
+
+        Default: None
+
+    normalize: `obj:func` (optional)
+        A normalization method that normalizes the provided value to the
+        `obj:Configuration`.
+
+        It is important to note that the normalization method will be applied
+        to the default value as well.
+
+        Default: None
+
+    reconfigurable: `obj:bool` (optional)
+        Whether or not the `obj:Configuration` is allowed to be reconfigured
+        after it was initially configured.
+
+        Default: True
+
+    TODO:
+    ----
+    - Eventually, we should consider trying to use Configuration recursively and
+      give the Configuration configurations.
+    - Parameter for whether or not the normalization method should be applied
+      to the default.
+    - Parameter for whether or not the validation method should be applied to
+      the default.
+    """
     # Child Implementation Properties
     invalid_child_error = ConfigurationInvalidError
     invalid_child_type_error = ConfigurationTypeError
@@ -45,7 +108,7 @@ class Configuration(Child, SimpleConfigurable):
         # TODO: Might be able to be conglomerated into the common child class.
         self._value = constants.NOTSET
         self._set = False
-        self._defaulted = constants.NOTSET
+        self._defaulted = False
 
         self._field = field
         self._default = kwargs.get('default', constants.NOTSET)
@@ -53,7 +116,7 @@ class Configuration(Child, SimpleConfigurable):
         self._required = kwargs.get('required', False)
         self._validate = kwargs.get('validate')
         self._normalize = kwargs.get('normalize')
-        self._updatable = kwargs.get('updatable')
+        self._reconfigurable = kwargs.get('reconfigurable')
 
         SimpleConfigurable.__init__(self)
         self.validate_configuration()
@@ -84,8 +147,8 @@ class Configuration(Child, SimpleConfigurable):
         return self._field
 
     @property
-    def updatable(self):
-        return self._updatable
+    def reconfigurable(self):
+        return self._reconfigurable
 
     @property
     def required(self):
@@ -114,12 +177,11 @@ class Configuration(Child, SimpleConfigurable):
     def defaulted(self):
         # Are we even updating the _set value right now?
         self.assert_set()
-        if self._default != constants.NOTSET:
-            return self._defaulted
-        else:
+        if self._default == constants.NOTSET:
             assert self._defaulted is False
-            return False
+        return self._defaulted
 
+    # WHY ARE WE NOT USING THE DEFAULT HERE?
     @property
     def value(self):
         # NOTE: The `obj:Configuration` may or may not be configured at this
@@ -204,11 +266,6 @@ class Configuration(Child, SimpleConfigurable):
             non-required value type checked if it is provided.  This would be a
             useful configuration for the `obj:Option` and `obj:Options`.
         """
-        # TODO: Make the use of the Configuration classes here more flexible -
-        # or even recursively use Configuration.
-        from pickyoptions.configuration.configurations import (
-            CallableConfiguration, EnforceTypesConfiguration)
-
         # What about reconfiguration?
         assert self.configured is False
 

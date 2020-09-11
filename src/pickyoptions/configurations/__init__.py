@@ -49,8 +49,10 @@ class Configurations(Parent, Child, SimpleConfigurable):
         `obj:ConfigurationDoesNotExist` will be raised.
         """
         # This is an annoying side effect of using ABCMeta
-        if k != '__isabstractmethod__':
-            assert self.configured
+        if k == '__isabstractmethod__':
+            return super(Configurations, self).__getattr__(k)
+
+        assert self.configured
 
         # TODO: Should part of this be moved to a parent configurable/simple
         # configurable class?
@@ -59,7 +61,7 @@ class Configurations(Parent, Child, SimpleConfigurable):
         # Keep these as sanity checks for the time being - although this logic
         # is likely duplicate and should be removed.
         if configuration.required:
-            assert not configuration.default_set
+            assert not configuration.defaulted
             assert configuration.configured
         return configuration
 
@@ -76,7 +78,8 @@ class Configurations(Parent, Child, SimpleConfigurable):
         reconfigured, `obj:ConfigurationCannotReconfigureError` will be
         raised.
         """
-        if not self.initialized:
+        # Note: This will cause issues if configurations are privately scoped.
+        if not self.initialized or k.startswith('_'):
             object.__setattr__(self, k, v)
         else:
             configuration = self[k]

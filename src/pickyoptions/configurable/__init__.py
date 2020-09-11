@@ -102,6 +102,7 @@ class Configurable(six.with_metaclass(ABCMeta, SimpleConfigurable)):
 
         configurations = deepcopy(self.configurations)
         configurations.add_children(extra_configurations or [])
+
         # The __setattr__ on models is sometimes overridden.
         object.__setattr__(self, 'configurations', configurations)
 

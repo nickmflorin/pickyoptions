@@ -19,16 +19,18 @@ def test_picky_options_error():
         value="test-value",
         identifier="Invalid Field Value"
     )
-    assert str(exc) == 'Invalid Field Value: (value = test-value) The test-field value is invalid.'
+    assert str(exc) == ('Invalid Field Value: (value = test-value) '
+        'The test-field value is invalid.')
 
     exc = ObjectTypeError(types=(str, int))
-    assert str(exc) == "Must be an instance of (<class 'str'>, <class 'int'>)."
+    assert str(exc) == "Must be of type (<class 'str'>, <class 'int'>)."
 
     exc = ObjectTypeError(field="test-field", types=(str, int))
-    assert str(exc) == "The field test-field must be an instance of (<class 'str'>, <class 'int'>)."
+    assert str(exc) == (
+        "The field `test-field` must be of type (<class 'str'>, <class 'int'>).")
 
     exc = OptionTypeError(field='option-field', types=(str, int))
     assert str(exc) == (
-        "Invalid Option: The option option-field must be an instance of "
+        "Invalid Option: The option for field `option-field` must be of type "
         "(<class 'str'>, <class 'int'>)."
     )
