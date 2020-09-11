@@ -1,11 +1,12 @@
 import logging
 
 from pickyoptions import settings, constants
-from pickyoptions.base import track_init
-from pickyoptions.child import Child
-from pickyoptions.configuration import Configuration
-from pickyoptions.configurable import SimpleConfigurable
-from pickyoptions.parent import Parent
+
+from pickyoptions.core.base import track_init
+from pickyoptions.core.child import Child
+from pickyoptions.core.configuration import Configuration
+from pickyoptions.core.configurable import SimpleConfigurable
+from pickyoptions.core.parent import Parent
 
 from .exceptions import ConfigurationDoesNotExist
 

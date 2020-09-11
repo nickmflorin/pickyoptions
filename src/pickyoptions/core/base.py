@@ -4,7 +4,7 @@ import functools
 import logging
 
 from pickyoptions import settings
-from pickyoptions.exceptions import PickyOptionsError
+from .exceptions import PickyOptionsError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)

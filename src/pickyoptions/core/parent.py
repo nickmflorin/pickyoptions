@@ -4,9 +4,10 @@ import six
 import sys
 
 from pickyoptions import settings
-from pickyoptions.base import BaseModel
-from pickyoptions.child import Child
-from pickyoptions.exceptions import ObjectTypeError, ParentHasChildError
+
+from .base import BaseModel
+from .child import Child
+from .exceptions import ObjectTypeError, ParentHasChildError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)

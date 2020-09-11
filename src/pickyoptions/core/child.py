@@ -3,8 +3,9 @@ import logging
 import six
 
 from pickyoptions import settings
-from pickyoptions.base import BaseModel
-from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
+
+from .base import BaseModel
+from .exceptions import PickyOptionsError, ObjectTypeError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)

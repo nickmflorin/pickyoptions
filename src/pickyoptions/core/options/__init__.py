@@ -6,16 +6,16 @@ import sys
 
 from pickyoptions import settings, constants
 
-from pickyoptions.base import track_init
-from pickyoptions.configuration import Configuration
-from pickyoptions.configuration.configurations import CallableConfiguration
-from pickyoptions.configurable import Configurable
-from pickyoptions.configurations import Configurations
-from pickyoptions.option import Option
-from pickyoptions.option.exceptions import (
+from pickyoptions.core.base import track_init
+from pickyoptions.core.configuration import Configuration
+from pickyoptions.core.configuration.configurations import CallableConfiguration
+from pickyoptions.core.configurable import Configurable
+from pickyoptions.core.configurations import Configurations
+from pickyoptions.core.option import Option
+from pickyoptions.core.option.exceptions import (
     OptionUnrecognizedError, OptionInvalidError)
-from pickyoptions.parent import Parent
-from pickyoptions.routine import Routine, Routines
+from pickyoptions.core.parent import Parent
+from pickyoptions.core.routine import Routine, Routines
 
 from .exceptions import (
     OptionsInvalidError, OptionsNotConfiguredError, OptionsConfiguringError)

@@ -1,4 +1,4 @@
-from pickyoptions.exceptions import PickyOptionsError
+from pickyoptions.core.exceptions import PickyOptionsError
 
 
 class RoutineError(PickyOptionsError):

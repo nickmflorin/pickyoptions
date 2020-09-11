@@ -2,8 +2,8 @@ from copy import deepcopy
 import pytest
 
 from pickyoptions import Option, Options
-from pickyoptions.configuration.exceptions import ConfigurationTypeError
-from pickyoptions.option.exceptions import OptionNotSetError
+from pickyoptions.core.configuration.exceptions import ConfigurationTypeError
+from pickyoptions.core.option.exceptions import OptionNotSetError
 
 
 def test_get_option_value_option_not_set():

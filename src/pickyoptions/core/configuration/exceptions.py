@@ -1,5 +1,5 @@
-from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
-from pickyoptions.configurable.exceptions import (
+from pickyoptions.core.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.core.configurable.exceptions import (
     NotConfiguredError, CannotReconfigureError, ConfiguringError)
 
 

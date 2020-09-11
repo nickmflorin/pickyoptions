@@ -1,4 +1,4 @@
-from pickyoptions.configuration.exceptions import ConfigurationError
+from pickyoptions.core.configuration.exceptions import ConfigurationError
 
 
 class ConfigurationDoesNotExist(ConfigurationError):

@@ -8,7 +8,7 @@ import sys
 
 from pickyoptions import settings
 from pickyoptions.lib.utils import optional_parameter_decorator
-from pickyoptions.base import BaseModel
+from pickyoptions.core.base import BaseModel
 
 from .constants import RoutineState
 from .exceptions import (

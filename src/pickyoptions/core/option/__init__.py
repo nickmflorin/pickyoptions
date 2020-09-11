@@ -5,18 +5,20 @@ import sys
 
 from pickyoptions import constants, settings
 
-from pickyoptions.base import track_init
-from pickyoptions.child import Child
+from pickyoptions.core.base import track_init
+from pickyoptions.core.child import Child
 
-from pickyoptions.configuration import Configuration
-from pickyoptions.configuration.configurations import (
+from pickyoptions.core.configuration import Configuration
+from pickyoptions.core.configuration.configurations import (
     CallableConfiguration, FieldConfiguration)
-from pickyoptions.configurable import Configurable
-from pickyoptions.configurations import Configurations
-from pickyoptions.configurations.exceptions import ConfigurationDoesNotExist
-from pickyoptions.configuration.configurations import EnforceTypesConfiguration
+from pickyoptions.core.configurable import Configurable
+from pickyoptions.core.configurations import Configurations
+from pickyoptions.core.configurations.exceptions import (
+    ConfigurationDoesNotExist)
+from pickyoptions.core.configuration.configurations import (
+    EnforceTypesConfiguration)
 
-from pickyoptions.routine import Routine, Routines
+from pickyoptions.core.routine import Routine, Routines
 
 from .exceptions import (
     OptionInvalidError,

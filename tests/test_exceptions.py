@@ -1,5 +1,5 @@
-from pickyoptions.exceptions import PickyOptionsError, ObjectTypeError
-from pickyoptions.option.exceptions import OptionTypeError
+from pickyoptions.core.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.core.option.exceptions import OptionTypeError
 
 
 def test_picky_options_error():

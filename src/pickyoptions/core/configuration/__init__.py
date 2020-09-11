@@ -1,11 +1,11 @@
 import logging
 
+from pickyoptions import constants, settings
 from pickyoptions.lib.utils import ensure_iterable
 
-from pickyoptions import constants, settings
-from pickyoptions.utils import accumulate_errors
-from pickyoptions.child import Child
-from pickyoptions.configurable import SimpleConfigurable
+from pickyoptions.core.utils import accumulate_errors
+from pickyoptions.core.child import Child
+from pickyoptions.core.configurable import SimpleConfigurable
 
 from .exceptions import (
     ConfigurationError,

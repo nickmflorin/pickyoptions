@@ -1,7 +1,7 @@
 import pytest
 
 from pickyoptions import Option, Options
-from pickyoptions.options.exceptions import OptionsInvalidError
+from pickyoptions.core.options.exceptions import OptionsInvalidError
 
 
 def test_restore_options():

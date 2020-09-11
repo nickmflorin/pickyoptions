@@ -6,7 +6,7 @@ import six
 import sys
 
 from pickyoptions import settings
-from pickyoptions.base import BaseModel
+from pickyoptions.core.base import BaseModel
 
 from .constants import ConfigurationState
 from .exceptions import (
