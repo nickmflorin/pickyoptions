@@ -1,6 +1,14 @@
-from pickyoptions.core.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.core.exceptions import (
+    PickyOptionsError,
+    DoesNotExistError,
+    ValueNotSetError,
+    ValueLockedError,
+    ValueTypeError,
+    ValueInvalidError,
+    ValueRequiredError
+)
 from pickyoptions.core.configuration.exceptions import (
-    NotConfiguredError, CannotReconfigureError, ConfiguringError)
+    NotConfiguredError, ConfiguringError, ConfigurationError)
 
 
 class OptionError(PickyOptionsError):
@@ -16,24 +24,24 @@ class OptionNotConfiguredError(NotConfiguredError, OptionError):
     default_message = "The option for field `{field}` is not yet configured."
 
 
-class OptionCannotReconfigureError(CannotReconfigureError, OptionError):
-    identifier = "Option Cannot Reconfigure"
-    default_message = "The option for field `{field}` cannot be reconfigured."
-
-
 class OptionConfiguringError(ConfiguringError, OptionError):
     identifier = "Option Configuring Error"
     default_message = "The option for field `{field}` is already configuring."
 
 
-class OptionLockedError(OptionError):
+class OptionConfigurationError(ConfigurationError, OptionError):
+    identifier = "Option Configuration Error"
+    default_message = "The option for field `{field}` is already configuring."
+
+
+class OptionLockedError(ValueLockedError, OptionError):
     default_message = (
         "The option for field `{field}` is locked and thus cannot be "
         "changed after it's initial population."
     )
 
 
-class OptionNotSetError(OptionError):
+class OptionNotSetError(ValueNotSetError, OptionError):
     """
     Raised when trying to access values or functionality on the `obj:Option`
     that require that the `obj:Option` was set.
@@ -42,16 +50,22 @@ class OptionNotSetError(OptionError):
     default_message = "The option for field `{field}` has not been set yet."
 
 
-class OptionUnrecognizedError(OptionError):
+class OptionDoesNotExist(DoesNotExistError, OptionError):
     """
     Raised when a provided option is not recognized - this means that it was
     never configured as a part of the `obj:Options`.
+
+    NOTE:
+    ----
+    This exception has to extend AttributeError because it is raised in the
+    __getattr__ method, and we want that error to trigger __hasattr__ to return
+    False.
     """
     identifier = "Unrecognized Option"
     default_message = "There is no configured option for field `{field}`."
 
 
-class OptionInvalidError(OptionError):
+class OptionInvalidError(ValueInvalidError, OptionError):
     """
     Base class for all exceptions that are raised when a an option value is
     invalid.
@@ -60,7 +74,7 @@ class OptionInvalidError(OptionError):
     identifier = "Invalid Option"
 
 
-class OptionRequiredError(OptionError):
+class OptionRequiredError(ValueRequiredError, OptionError):
     """
     Raised when an option value is required but not specified.
     """
@@ -69,7 +83,7 @@ class OptionRequiredError(OptionError):
         "The option for field `{field}` is required, but was not provided.")
 
 
-class OptionTypeError(ObjectTypeError, OptionInvalidError):
+class OptionTypeError(ValueTypeError, OptionInvalidError):
     """
     Raised when an option value is required to be of a specific type but is not
     of that type.

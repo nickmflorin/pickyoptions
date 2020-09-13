@@ -1,6 +1,12 @@
-from pickyoptions.core.exceptions import PickyOptionsError, ObjectTypeError
-from pickyoptions.core.configurable.exceptions import (
-    NotConfiguredError, CannotReconfigureError, ConfiguringError)
+from pickyoptions.core.exceptions import (
+    PickyOptionsError,
+    DoesNotExistError,
+    ValueNotSetError,
+    ValueLockedError,
+    ValueTypeError,
+    ValueInvalidError,
+    ValueRequiredError
+)
 
 
 class ConfigurationError(PickyOptionsError):
@@ -11,28 +17,49 @@ class ConfigurationError(PickyOptionsError):
     identifier = "Configuration Error"
 
 
+class NotConfiguredError(ConfigurationError):
+    default_message = "The configuration has not been configured."
+
+
+class ConfiguringError(ConfigurationError):
+    default_message = "The configuration is already configuring."
+
+
+class ConfigurationDoesNotExist(DoesNotExistError, ConfigurationError):
+    """
+    NOTE:
+    ----
+    This exception has to extend AttributeError because it is raised in the
+    __getattr__ method, and we want that error to trigger __hasattr__ to return
+    False.
+    """
+    default_message = "Configuration for `{field}` does not exist."
+
+
 class ConfigurationNotConfiguredError(NotConfiguredError, ConfigurationError):
     default_message = "The configuration for `{field}` has not been configured."
 
 
-class ConfigurationCannotReconfigureError(CannotReconfigureError,
-        ConfigurationError):
+class ConfigurationConfiguringError(ConfiguringError):
+    default_message = (
+        "The configuration for field `{field}` is already configuring.")
+
+
+class ConfigurationNotSetError(ValueNotSetError, ConfigurationError):
+    default_message = (
+        "The configuration for field `{field}` has not been set on the "
+        "{instance} instance."
+    )
+
+
+class ConfigurationLockedError(ValueLockedError, ConfiguringError):
     default_message = (
         "The configuration for `{field}` has already been configured and "
         "cannot be reconfigured."
     )
 
 
-class ConfigurationConfiguringError(ConfiguringError, ConfigurationError):
-    default_message = (
-        "The configuration for field `{field}` is already configuring.")
-
-
-class ConfigurationNotSetError(ConfigurationError):
-    default_message = "The configuration for field `{field}` has not been set."
-
-
-class ConfigurationInvalidError(ConfigurationError):
+class ConfigurationInvalidError(ValueInvalidError, ConfigurationError):
     """
     Raised when a provided configuration value is invalid.
     """
@@ -40,12 +67,12 @@ class ConfigurationInvalidError(ConfigurationError):
     default_message = "The configuration `{field}` is invalid."
 
 
-class ConfigurationRequiredError(ConfigurationError):
+class ConfigurationRequiredError(ValueRequiredError, ConfigurationError):
     default_message = (
         "The configuration `{field}` is required but was not provided.")
 
 
-class ConfigurationTypeError(ObjectTypeError, ConfigurationInvalidError):
+class ConfigurationTypeError(ValueTypeError, ConfigurationInvalidError):
     @property
     def default_message(self):
         if len(self.types) != 0:

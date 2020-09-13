@@ -1,80 +1,174 @@
-import six
+import logging
 
-from pickyoptions.lib.utils import get_num_function_arguments
-from . import Configuration
+from pickyoptions import settings, constants
+
+from pickyoptions.core.base import track_init
+from pickyoptions.core.parent import Parent
+
+from .configurable import SimpleConfigurable
+from .configuration import Configuration
+from .exceptions import ConfigurationDoesNotExist
 
 
-class CallableConfiguration(Configuration):
-    def __init__(self, field, num_arguments=None, error_message=None):
-        super(CallableConfiguration, self).__init__(field, required=False,
-            default=None)
-        self._num_arguments = num_arguments
-        self._error_message = error_message or "Must be a callable."
+logger = logging.getLogger(settings.PACKAGE_NAME)
 
-    @property
-    def num_arguments(self):
-        return self._num_arguments
 
-    @property
-    def error_message(self):
-        default_message = "Must be a callable."
-        if self.num_arguments is not None:
-            default_message = (
-                "Must be a callable that takes %s arguments."
-                % self.num_arguments
+# TODO: Implement child properties like _set, _default and _value.
+# TODO: This acts a little funky as a Child, since the Child class wants to
+# be able to access an identifier...
+class Configurations(Parent, SimpleConfigurable):
+
+    # Child Implementation Properties
+    parent_cls = ('Options', 'Option')
+    child_identifier = "field"
+    child_cls = Configuration
+    does_not_exist_error = ConfigurationDoesNotExist
+
+    @track_init
+    def __init__(self, *configurations, **kwargs):
+        self._validate = kwargs.pop('validate', None)
+        SimpleConfigurable.__init__(self)
+        Parent.__init__(self, children=list(configurations))
+
+    def __repr__(self):
+        # TODO: Keep track of state as an attribute.
+        if self.initialized:
+            return "<{cls_name} {configurations}>".format(
+                configurations=self.children,
+                cls_name=self.__class__.__name__
             )
-        return self._error_message or default_message
+        return "<{cls_name} state={state}>".format(
+            state=constants.NOT_INITIALIZED,
+            cls_name=self.__class__.__name__
+        )
 
-    def validate(self):
-        super(CallableConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value):
-                self.raise_invalid(self.error_message)
-            elif self.num_arguments is not None:
-                num_found_arguments = get_num_function_arguments(self.value)
-                if num_found_arguments != self.num_arguments:
-                    self.raise_invalid(self.error_message)
+    @property
+    def __isabstractmethod__(self):
+        # This is an annoying side effect of using ABCMeta, not sure exactly
+        # why it is being triggered yet but it is messing with the __getattr__
+        # method.
+        return False
 
-
-class FieldConfiguration(Configuration):
-    def __init__(self, field):
-        super(FieldConfiguration, self).__init__(field, required=True,
-            updatable=False)
-
-    def validate(self):
-        super(FieldConfiguration, self).validate()
-        if not isinstance(self.value, six.string_types):
-            self.raise_invalid_type(types=six.string_types)
-        elif self.value.startswith('_'):
-            self.raise_invalid(
-                message="Cannot be scoped as a private attribute.")
-
-
-class EnforceTypesConfiguration(Configuration):
-    def __init__(self, field):
-        super(EnforceTypesConfiguration, self).__init__(field, default=None)
-
-    def normalize(self, value):
-        if hasattr(value, '__iter__') and len(value) == 0:
-            return None
-        return value
-
-    def validate(self):
-        super(EnforceTypesConfiguration, self).validate()
-        if self.value is not None:
-            if not hasattr(self.value, '__iter__'):
-                self.raise_invalid(message="Must be an iterable of types.")
-            for tp in self.value:
-                if not isinstance(tp, type):
-                    self.raise_invalid(message="Must be an iterable of types.")
-
-    def conforms_to(self, value):
+    def __getattr__(self, k):
         """
-        Checks whether or not the provided value conforms to the types
-        specified by this configuration.
+        Retrieves and returns the `obj:Configuration` in the set of
+        `obj:Configurations` based on the `obj:str` `field` attribute of the
+        `obj:Configuration`.
+
+        If the `obj:Configuration` does not exist,
+        `obj:ConfigurationDoesNotExist` will be raised.
         """
-        if self.value is not None:
-            assert type(self.value) is tuple
-            if value is None or not isinstance(value, self.value):
-                return False
-        return True
+        # This is an annoying side effect of using ABCMeta
+        # if self.has_child(k):
+        #     configuration = super(Configurations, self).__getattr__(k)
+        #
+        #     # Keep these as sanity checks for the time being - although this logic
+        #     # is likely duplicate and should be removed.
+        #     if configuration.required:
+        #         if configuration.value_instance.set:
+        #             assert not configuration.value_instance.defaulted
+        #         # This seems to be causing problems when we try to access the
+        #         # field configuration from the configurations at times when the
+        #         # field configuration is not configured.  We should change the field
+        #         # to not be a configuration.
+        #         # assert configuration.configured
+        #     return configuration
+        # try:
+        #     assert self.configured
+        # except AssertionError:
+        #     import ipdb; ipdb.set_trace()
+        # assert self.configured
+
+        # TODO: Should part of this be moved to a parent configurable/simple
+        # configurable class?
+        configuration = super(Configurations, self).__getattr__(k)
+
+        # Keep these as sanity checks for the time being - although this logic
+        # is likely duplicate and should be removed.
+        if configuration.required:
+            if configuration.set:
+                assert not configuration.defaulted
+            # This seems to be causing problems when we try to access the
+            # field configuration from the configurations at times when the
+            # field configuration is not configured.  We should change the field
+            # to not be a configuration.
+            # assert configuration.configured
+        return configuration
+
+    def __setattr__(self, k, v):
+        """
+        Updates the value of the `obj:Configuration` whose field is associated
+        with the provided `obj:str` `field` attribute by configuring the
+        `obj:Configuration` with the provided value.
+
+        If the `obj:Configuration` does not exist,
+        `obj:ConfigurationDoesNotExist` will be raised.
+
+        If the `obj:Configuration` is already configured and cannot be
+        reconfigured, `obj:ConfigurationCannotReconfigureError` will be
+        raised.
+        """
+        # Note: This will cause issues if configurations are privately scoped.
+        if not self.initialized or k.startswith('_'):
+            object.__setattr__(self, k, v)
+        else:
+            configuration = self[k]
+
+            # Make sure that the configuration can be reconfigured.
+            if not configuration.updatable:
+                configuration.raise_cannot_reconfigure()
+
+            configuration.configure(v)
+
+            # Validate the overall configuration after the configuration is set.
+            self.validate()
+
+    def validate_configuration(self):
+        if self._validate_configuration is not None:
+            self._validate_configuration()
+
+    def _configure(self, **kwargs):
+        """
+        Configures the `obj:Configuration`(s) of the overall
+        `obj:Configurations` instance with the provided mapping of key-value
+        pairs.
+
+        For each field in the key-value pairs, if the `obj:Configuration` does
+        not exist for the field, `obj:ConfigurationDoesNotExist` will be raised.
+
+        NOTE:
+        ----
+        The configuration validation is performed in the ConfigurationRoutine
+        of the owner class.
+        """
+        # Make sure no invalid configurations provided.
+        for k, _ in kwargs.items():
+            # TODO: Change name to raise_if_unknown_child.
+            self.raise_if_child_missing(k)
+
+        # It is important here that we loop over all the `obj:Configurations`,
+        # because configuring should replace all of the `obj:Configuration`
+        # values.
+        for field, configuration in self:
+            if field in kwargs:
+                # This will set the configuration as being configured - since
+                # the value was explicitly provided.
+                configuration.configure(kwargs[field])
+            else:
+                # This will not set teh configuration as being configured,
+                # since the value was not explicitly provided.  It will
+                # however validate that the configuration is not required
+                # before proceeding.
+                configuration.value = None
+
+    @property
+    def explicitly_set_configurations(self):
+        """
+        Returns the key-value pairs of explicitly set configuration values
+        that were provided on configuration of the `obj:Configurations`.
+        """
+        data = {}
+        for field, configuration in self:
+            if configuration.configured:
+                data[field] = configuration.value
+        return data

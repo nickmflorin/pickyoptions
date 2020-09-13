@@ -1,8 +1,8 @@
-from abc import ABCMeta, abstractproperty
 import logging
 import six
 
 from pickyoptions import settings
+from pickyoptions.lib.utils import extends_or_instance_of
 
 from .base import BaseModel
 from .exceptions import PickyOptionsError, ObjectTypeError
@@ -11,46 +11,21 @@ from .exceptions import PickyOptionsError, ObjectTypeError
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Child(six.with_metaclass(ABCMeta, BaseModel)):
+class Child(BaseModel):
+    abstract_properties = (
+        'parent_cls',
+        'child_identifier',
+    )
+
     def __init__(self, parent=None):
         self._assigned = False
         self._parent = None
-        # self._value = constants.NOTSET
-        # self._set = False
-        # self._defaulted = constants.NOTSET
-
         if parent is not None:
             self.assign_parent(parent)
-
-    @abstractproperty
-    def parent_cls(self):
-        pass
-
-    @abstractproperty
-    def child_identifier(self):
-        pass
 
     @property
     def assigned(self):
         return self._assigned
-    #
-    # def reset(self):
-    #     self._value = constants.NOTSET
-    #     self._defaulted = constants.NOTSET
-    #     self._set = False
-    #
-    # @property
-    # def set(self):
-    #     if self._set:
-    #         assert self._value != constants.NOTSET
-    #         return self._set
-    #     self._value == constants.NOTSET
-    #     return self._set
-    #
-    # @property
-    # def defaulted(self):
-    #     self.assert_set()
-    #     return self._defaulted
 
     @property
     def identifier(self):
@@ -116,32 +91,12 @@ class Child(six.with_metaclass(ABCMeta, BaseModel)):
         return self._parent
 
     def validate_parent(self, parent):
-        if isinstance(self.parent_cls, six.string_types):
-            if parent.__class__.__name__ != self.parent_cls:
-                raise ObjectTypeError(
-                    value=parent,
-                    message="The parent must be of type `{types}`.",
-                    types=self.parent_cls,
-                )
-        elif hasattr(self.parent_cls, '__iter__'):
-            assert all([isinstance(v, six.string_types) for v in self.parent_cls])
-            if parent.__class__.__name__ not in self.parent_cls:
-                raise ObjectTypeError(
-                    value=parent,
-                    message="The parent must be of type `{types}`.",
-                    types=self.parent_cls
-                )
-        elif isinstance(self.parent_cls, type):
-            if not isinstance(parent, self.parent_cls):
-                raise ObjectTypeError(
-                    value=parent,
-                    message="The parent must be of type `{types}`.",
-                    types=type(self.parent_cls),
-                )
-        else:
-            raise ValueError(
-                "The parent type %s is not a valid parent of child %s."
-                % (type(parent), self.__class__.__name__)
+        if not extends_or_instance_of(parent, self.parent_cls):
+            # TODO: Come up with a better error.
+            raise ObjectTypeError(
+                value=parent,
+                message="The parent must be of type `{types}`.",
+                types=self.parent_cls,
             )
 
     def remove_parent(self):

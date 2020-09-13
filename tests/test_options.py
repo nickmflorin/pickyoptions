@@ -7,8 +7,8 @@ from pickyoptions.core.options.exceptions import OptionsInvalidError
 def test_restore_options():
     options = Options(
         Option('color', default='red'),
-        Option('height', required=True, enforce_types=(int, float)),
-        Option('width', required=False, default=0.0, enforce_types=(int, float))
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float))
     )
     options.populate(color='blue', height=5)
     assert options.color == 'blue'
@@ -24,8 +24,8 @@ def test_restore_options():
 def test_restore_options_multiple_overrides():
     options = Options(
         Option('color', default='red'),
-        Option('height', required=True, enforce_types=(int, float)),
-        Option('width', required=False, default=0.0, enforce_types=(int, float))
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float))
     )
     options.populate(color='blue', height=2.0)
 
@@ -44,8 +44,8 @@ def test_restore_options_multiple_overrides():
 def test_populate_unspecified_unrequired_value():
     options = Options(
         Option('color', default='red'),
-        Option('height', required=True, enforce_types=(int, float)),
-        Option('width', required=False, default=0.0, enforce_types=(int, float)),
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float)),
         strict=True
     )
     options.populate(color='blue', height=2.0)
@@ -67,13 +67,17 @@ def test_validate_options_on_population():
 
     options = Options(
         Option('color', default='red'),
-        Option('height', required=True, enforce_types=(int, float)),
-        Option('width', required=False, default=0.0, enforce_types=(int, float)),
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float)),
         validate=validate_options
     )
     with pytest.raises(OptionsInvalidError) as e:
         options.populate(width=5.0, height=1.0, color='green')
-    assert str(e.value) == "Invalid Options: The height must be greater than the width."
+    assert str(e.value) == (
+        "\n\033[1mInvalid Options\033[0;0m: (instance = <Options "
+        "state=POPULATED color=green, height=1.0, width=5.0>) The height must "
+        "be greater than the width."
+    )
 
 
 def test_validate_options_on_override():
@@ -83,15 +87,20 @@ def test_validate_options_on_override():
 
     options = Options(
         Option('color', default='red'),
-        Option('height', required=True, enforce_types=(int, float)),
-        Option('width', required=False, default=0.0, enforce_types=(int, float)),
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float)),
         validate=validate_options
     )
     options.populate(width=1.0, height=4.0, color='green')
 
     with pytest.raises(OptionsInvalidError) as e:
         options.override(width=5.0)
-    assert str(e.value) == "Invalid Options: The height must be greater than the width."
+
+    assert str(e.value) == (
+        "\n\033[1mInvalid Options\033[0;0m: (instance = <Options "
+        "state=POPULATED color=green, height=4.0, width=5.0>) The height "
+        "must be greater than the width."
+    )
 
 
 def test_options_deepcopy():

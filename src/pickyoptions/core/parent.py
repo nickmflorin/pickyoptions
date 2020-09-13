@@ -1,22 +1,23 @@
-from abc import ABCMeta, abstractproperty
 import logging
 import six
-import sys
 
 from pickyoptions import settings
 
 from .base import BaseModel
 from .child import Child
-from .exceptions import ObjectTypeError, ParentHasChildError
+from .exceptions import ObjectTypeError, ParentHasChildError, DoesNotExistError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Parent(six.with_metaclass(ABCMeta, BaseModel)):
+class Parent(BaseModel):
     """
     Mapping model.
     """
+    does_not_exist_error = DoesNotExistError
+    abstract_properties = ('child_cls', )
+
     def __init__(self, children=None, child_value=None):
         self._children = []
         self._child_value = child_value
@@ -25,27 +26,9 @@ class Parent(six.with_metaclass(ABCMeta, BaseModel)):
         for child in children:
             self.assign_child(child)
 
-    @abstractproperty
-    def child_cls(self):
-        pass
-
-    @abstractproperty
-    def unrecognized_child_error(self):
-        pass
-
     def __getattr__(self, k):
-        # We cannot decorate this with requires_populated because it will
-        # disguise actual attribute errors.  Instead, we raise the populating
-        # error only if the option exists.
-        try:
-            child = self.get_child(k)
-        except self.unrecognized_child_error:
-            if settings.DEBUG:
-                # TODO: Set the original traceback if we can.
-                raise AttributeError("The attribute %s does not exist." % k)
-            six.reraise(*sys.exc_info())
-        else:
-            return self.child_value(child)
+        child = self.get_child(k)
+        return self.child_value(child)
 
     def __getitem__(self, k):
         return self.__getattr__(k)
@@ -141,10 +124,13 @@ class Parent(six.with_metaclass(ABCMeta, BaseModel)):
     def zipped(self):
         return [(field, value) for field, value in self]
 
-    def raise_no_child(self, *args, **kwargs):
-        assert hasattr(self, 'unrecognized_child_error')
-        kwargs.setdefault('cls', self.unrecognized_child_error)
-        self.raise_with_self(*args, **kwargs)
+    def raise_child_does_not_exist(self, *args, **kwargs):
+        kwargs.setdefault('cls', self.does_not_exist_error)
+        # This is necessary because of multiple inheritance patterns when
+        # inheriting from Child and Parent.  We should come up with a better
+        # system.  This happens in Configurations, where it inherits from both
+        # Parent and Child.
+        BaseModel.raise_with_self(self, *args, **kwargs)
 
     def get_child(self, identifier):
         try:
@@ -153,13 +139,13 @@ class Parent(six.with_metaclass(ABCMeta, BaseModel)):
                 if child.identifier == identifier
             ][0]
         except IndexError:
-            if settings.DEBUG:
-                # TODO: Set the original traceback if we can.
-                raise AttributeError(
-                    "The attribute `%s` does not exist on the %s instance."
-                    % (identifier, self.__class__.__name__)
-                )
-            self.raise_no_child(field=identifier)
+            # if settings.DEBUG:
+            #     # TODO: Set the original traceback if we can.
+            #     raise AttributeError(
+            #         "The attribute `%s` does not exist on the %s instance."
+            #         % (identifier, self.__class__.__name__)
+            #     )
+            self.raise_child_does_not_exist(field=identifier)
 
     def new_children(self, children):
         self.remove_children()

@@ -7,13 +7,14 @@ import sys
 from pickyoptions import settings, constants
 
 from pickyoptions.core.base import track_init
-from pickyoptions.core.configuration import Configuration
-from pickyoptions.core.configuration.configurations import CallableConfiguration
-from pickyoptions.core.configurable import Configurable
-from pickyoptions.core.configurations import Configurations
+from pickyoptions.core.configuration import (
+    Configuration, Configurable, Configurations)
+from pickyoptions.core.configuration.configuration_lib import (
+    CallableConfiguration)
+
 from pickyoptions.core.option import Option
 from pickyoptions.core.option.exceptions import (
-    OptionUnrecognizedError, OptionInvalidError)
+    OptionDoesNotExist, OptionInvalidError)
 from pickyoptions.core.parent import Parent
 from pickyoptions.core.routine import Routine, Routines
 
@@ -122,20 +123,26 @@ class Options(Configurable, Parent):
     # Parent Implementation Properties
     child_cls = Option
     child_identifier = "field"
-    unrecognized_child_error = OptionUnrecognizedError
+    does_not_exist_error = OptionDoesNotExist
 
+    # TODO: We should consider moving this inside the instance, because it might
+    # be causing code to be run unnecessarily on import.
     configurations = Configurations(
         CallableConfiguration(
             'post_process',
             num_arguments=1,
-            error_message="Must be a callable that takes the options instance as "
-            "it's first and only argument."
+            error_message=(
+                "Must be a callable that takes the options instance as "
+                "it's first and only argument."
+            )
         ),
         CallableConfiguration(
             'validate',
             num_arguments=1,
-            error_message="Must be a callable that takes the options instance as "
-            "it's first and only argument."
+            error_message=(
+                "Must be a callable that takes the options instance as "
+                "it's first and only argument."
+            )
         ),
         Configuration('strict', default=False, types=(bool, )),
     )
@@ -161,21 +168,23 @@ class Options(Configurable, Parent):
         return result
 
     def __repr__(self):
+        # TODO: Keep track of state of `obj:Options` with attribute...
         if self.initialized:
             if self.routines.populating.finished:
-                return "<Populated {cls_name} {params}>".format(
+                return "<{cls_name} state={state} {params}>".format(
                     cls_name=self.__class__.__name__,
+                    state=constants.POPULATED,
                     params=", ".join([
                         "{k}={v}".format(k=k, v=v)
                         for k, v in self.zipped
                     ])
                 )
-            return "<{state} {cls_name} [{options}]>".format(
+            return "<{cls_name} state={state} [{options}]>".format(
                 cls_name=self.__class__.__name__,
                 state=constants.NOT_POPULATED,
                 options=", ".join([option.field for option in self.children])
             )
-        return "<{state} {cls_name}>".format(
+        return "<{cls_name} state={state}>".format(
             state=constants.NOT_INITIALIZED,
             cls_name=self.__class__.__name__
         )
@@ -185,15 +194,16 @@ class Options(Configurable, Parent):
         # Do we need to be checking if the options are initialized?
         if settings.DEBUG and k.startswith('_'):
             raise AttributeError(
-                "The %s instance does not have attribut %s."
+                "The %s instance does not have attribute %s."
                 % (self.__class__.__name__, k)
             )
-        # TODO: Do we need to check if it is configured here?
         # TODO: Should this part be moved to configurable?
         # WARNING: This might break if there is a configuration that is named the
         # same as an option - we should prevent that.
         # If the value is referring to a configuration, return the configuration
         # value.
+        self.assert_configured()
+
         if self.configured and self.configurations.has_child(k):
             configuration = getattr(self.configurations, k)
             return configuration.value
@@ -238,7 +248,7 @@ class Options(Configurable, Parent):
         # the configuration.
         self.reset()
         self.new_children(value)
-        self.validate_configuration()
+        self.configurations.validate()
 
     def pre_configuration(self):
         self.reset()
@@ -292,6 +302,7 @@ class Options(Configurable, Parent):
                     # This will set the default on the `obj:Option` if it is not
                     # required.  It will also validate that the option is not
                     # required before proceeding any further.
+                    # TODO: Does setting None on the value work the same way?
                     option.set_default()
 
     def override(self, *args, **kwargs):
@@ -579,4 +590,8 @@ class Options(Configurable, Parent):
         pass
 
 
-options = Options()
+# TODO: This is causing code to run on import, which isn't ideal.  What we should
+# do is make the configuration validation conditionally lazy - so it is performed
+# when the options are first used, not when they are first instantiated.
+# >>> optinos = Options(lazy=True)
+options = None

@@ -8,32 +8,33 @@ from pickyoptions import constants, settings
 from pickyoptions.core.base import track_init
 from pickyoptions.core.child import Child
 
-from pickyoptions.core.configuration import Configuration
-from pickyoptions.core.configuration.configurations import (
-    CallableConfiguration, FieldConfiguration)
-from pickyoptions.core.configurable import Configurable
-from pickyoptions.core.configurations import Configurations
-from pickyoptions.core.configurations.exceptions import (
+from pickyoptions.core.configuration import (
+    Configuration, Configurable, Configurations)
+from pickyoptions.core.configuration.configuration_lib import (
+    CallableConfiguration)
+from pickyoptions.core.configuration.exceptions import (
     ConfigurationDoesNotExist)
-from pickyoptions.core.configuration.configurations import (
-    EnforceTypesConfiguration)
+from pickyoptions.core.configuration.configuration_lib import (
+    TypesConfiguration)
 
 from pickyoptions.core.routine import Routine, Routines
+from pickyoptions.core.valued import Valued
 
 from .exceptions import (
     OptionInvalidError,
     OptionRequiredError,
     OptionTypeError,
     OptionNotSetError,
+    OptionLockedError,
     OptionNotConfiguredError,
-    OptionCannotReconfigureError,
-    OptionConfiguringError
+    OptionConfigurationError,
+    OptionConfiguringError,
 )
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Option(Configurable, Child):
+class Option(Configurable, Child, Valued):
     """
     Add Docstring
 
@@ -54,29 +55,35 @@ class Option(Configurable, Child):
         publically accessible as .default with the NOTSET value pruned.
     """
     # SimpleConfigurable Implementation Properties
-    cannot_reconfigure_error = OptionCannotReconfigureError
+    # cannot_reconfigure_error = OptionCannotReconfigureError
     not_configured_error = OptionNotConfiguredError
     configuring_error = OptionConfiguringError
-    # not_set_error = OptionNotSetError
+
+    # Valued Implementation Properties
+    not_set_error = OptionNotSetError
+    locked_error = OptionLockedError
+    required_error = OptionRequiredError  # Also used by Child implementation
+    configuration_error = OptionConfigurationError
+    invalid_error = OptionInvalidError  # Also used by Child implementation
 
     # Child Implementation Properties
     parent_cls = 'Options'
     child_identifier = "field"
-    unrecognized_child_error = ConfigurationDoesNotExist
-    invalid_child_error = OptionInvalidError
-    invalid_child_type_error = OptionTypeError
-    required_child_error = OptionRequiredError
+    does_not_exist_error = ConfigurationDoesNotExist
+    invalid_type_error = OptionTypeError
 
-    # TODO: What is going on with the not set stuff?  Where are we consolidating
-    # that?
-    child_not_set_error = OptionNotSetError
-
+    # TODO: We should consider moving this inside the instance, because it might
+    # be causing code to be run unnecessarily on import.
     configurations = Configurations(
-        Configuration('default', default=constants.NOTSET),
+        # If we don't provide a default value, the assertion checks in the
+        # configuration value don't work:
+        # if self._value is None:
+        #     assert self.default_provided
+        Configuration('default', default=None),
         Configuration('required', types=(bool, ), default=False),
         Configuration('allow_null', types=(bool, ), default=True),
         Configuration('locked', types=(bool, ), default=False),
-        EnforceTypesConfiguration('enforce_types'),
+        TypesConfiguration('types'),
         CallableConfiguration(
             'validate',
             num_arguments=2,
@@ -124,44 +131,46 @@ class Option(Configurable, Child):
                 "argument."
             )
         ),
-        Configuration("help_text", default="", types=six.string_types)
+        Configuration("help_text", default="", types=six.string_types),
     )
 
     @track_init
     def __init__(self, field, **kwargs):
+        # TODO: Maybe move the field instantiation to a common class?  Valued?
+        self._field = field
 
-        # TODO: Might be able to be conglomerated into the common child class.
-        self._value = constants.NOTSET
-        # This is only applicable for the option case right now.
-        self._set = False
-        self._defaulted = constants.NOTSET
-
-        # Include the `field` from the arguments as a configuration.  We could of
-        # course just include in the static attribute configurations, but then it
-        # would have to be provided as a **kwarg - which is slightly less user
-        # friendly.
-        kwargs.update(
-            extra_configurations=[FieldConfiguration('field')],
-            field=field
-        )
+        if not isinstance(self._field, six.string_types):
+            # TODO: This won't work, come up with a better exception handler.
+            self.raise_invalid_type(types=six.string_types)
+        elif self._field.startswith('_'):
+            # TODO: This won't work, come up with a better exception handler.
+            self.raise_invalid(
+                message="Cannot be scoped as a private attribute.")
 
         self.routines = Routines(
             Routine(id='populating'),
             Routine(id='overriding'),
             Routine(id='restoring')
         )
+        Valued.__init__(self, field, **kwargs)
 
+        # Initializing Configurable will configure the instance and validate the
+        # configuration, so the Value needs to be set before this otherwise
+        # it will not be able to acess the configuration values.
         Configurable.__init__(self, **kwargs)
         # The child needs to be initialized after the option is configured,
         # because the child will use the `field` value (which is configured) to
         # uniquely identify the child.
         Child.__init__(self, parent=kwargs.pop('parent', None))
 
+    @property
+    def field(self):
+        return self._field
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         explicit_configuration = deepcopy(
             self.configurations.explicitly_set_configurations, memo)
-        del explicit_configuration['field']
         result = cls.__new__(cls, self.field, **explicit_configuration)
         result.__init__(self.field, **explicit_configuration)
         memo[id(self)] = result
@@ -175,97 +184,20 @@ class Option(Configurable, Child):
                 cls_name=self.__class__.__name__,
                 field=self.field,
             )
-        return "<{cls_name} {state}>".format(
+        # TODO: Keep track of the state of the Option as an attribute...
+        return "<{cls_name} state={state}>".format(
             cls_name=self.__class__.__name__,
             state=constants.NOT_INITIALIZED
         )
 
     def __getattr__(self, k):
+        configuration = getattr(self.configurations, k)
+        # Wait to make the assertion down here so that __hasattr__ will return
+        # False before checking if the `obj:Option` is configured.
         assert self.configured
-        try:
-            configuration = getattr(self.configurations, k)
-        except AttributeError:
-            assert settings.DEBUG is True
-            raise AttributeError(
-                "The attribute %s does not exist on the Option instance." % k)
-        else:
-            return configuration.value
+        return configuration.value
 
-    # TODO: Might be able to be conglomerated into the common child class.
-    def assert_set(self, *args, **kwargs):
-        if not self.set:
-            self.raise_not_set(*args, **kwargs)
-
-    # TODO: Might be able to be conglomerated into the common child class.
-    def raise_not_set(self, *args, **kwargs):
-        kwargs['cls'] = OptionNotSetError
-        return self.raise_with_self(*args, **kwargs)
-
-    def raise_invalid_type(self, *args, **kwargs):
-        kwargs['types'] = self.enforce_type
-        return super(Option, self).raise_invalid_type()
-
-    # TODO: Might be able to be conglomerated into the common child class.
-    @property
-    def set(self):
-        if self._set:
-            assert self._value != constants.NOTSET
-            return self._set
-        self._value == constants.NOTSET
-        return self._set
-
-    # TODO: Might be able to be conglomerated into the common child class.
-    @property
-    def defaulted(self):
-        """
-        Returns whether or not the `obj:Option` default was configured with an
-        explicitly provided value.
-        """
-        # TODO: This is HIGHLY problematic - for starts, we can have an option
-        # that takes on its default value at the beginning, but is later
-        # overridden with that same default value... that will cause defaulted to
-        # be True when it was actually populated.
-        self.assert_set()
-        configuration = self.configurations['default']
-        if configuration.configured:
-            return self._defaulted
-        else:
-            assert self._defaulted is False
-            return self._defaulted
-
-    @property
-    def value(self):
-        # This might cause issues now, since we switched the population in the
-        # parent to only call populated if the value exists (and not if it is set
-        # to None).
-        # TODO: Come up with a property that indicates the option has been set,
-        # not populated per say, but set.
-        # if not self.populated:
-        #     raise OptionNotPopulatedError(field=self.field)
-        self.assert_set()
-
-        value = self._value
-        if self._value is None:
-            assert not self.required
-            # TODO: Do we want to enforce that the default was set?  This would
-            # prevent users from being able to set required = False without having
-            # to explicitly set None as a default.
-            if self.default is None:
-                # TODO: This still has to be validated.
-                assert self.allow_null is True
-            value = self.default
-
-        if self.normalize:
-            return self.normalize(value, self)
-        return value
-
-    @value.setter
-    def value(self, value):
-        # TODO:  What happens if the value is set with the same value?  Should we
-        # still store the value in the routine history?
-        self._value = value
-        self._set = True
-
+    def post_set(self, value):
         # We do this here instead of at the end of the routines so these always
         # run when the value is updated.
         self.do_validate()
@@ -301,24 +233,14 @@ class Option(Configurable, Child):
             self.post_routine_with_options()
 
     def reset(self):
+        self.value_instance.reset()  # Resets the values/defaults.
         self.routines.reset()
-        self._value = constants.NOTSET
-        self._defaulted = constants.NOTSET
-        self._set = False
-
-    def set_default(self):
-        if self.set:
-            raise ValueError(
-                "Cannot set default on option when it has already been set.")
-        self._defaulted = True
-        self.value = None
 
     def override(self, value):
         # Once the `obj:Option` is overridden, the default is no longer set - even
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        self._defaulted = False
         with self.routines.overriding(self):
             self.value = value
 
@@ -327,7 +249,6 @@ class Option(Configurable, Child):
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        self._defaulted = False
         with self.routines.populating(self):
             self.value = value
 
@@ -430,9 +351,9 @@ class Option(Configurable, Child):
         """
         Applies the user provided validation method to the `obj:Option`.
         """
-        from pickyoptions.options.exceptions import OptionsInvalidError
+        from pickyoptions.core.options.exceptions import OptionsInvalidError
 
-        configuration = self.configuration(name)
+        configuration = self.configurations[name]
         try:
             # NOTE: This accounts for the default value and the value after
             # normalization.
@@ -444,13 +365,16 @@ class Option(Configurable, Child):
             if isinstance(e, (OptionsInvalidError, OptionInvalidError)):
                 six.reraise(*sys.exc_info())
             else:
-                configuration.raise_invalid(message=(
-                    "If raising an exception to indicate that the option is "
-                    "invalid, the exception must be an instance of "
-                    "OptionInvalidError or OptionsInvalidError."
-                    "\nIt is recommended to use the `raise_invalid` method "
-                    "of the passed in option or options instance."
-                ))
+                configuration.raise_invalid(
+                    children=[e],
+                    message=(
+                        "If raising an exception to indicate that the option is "
+                        "invalid, the exception must be an instance of "
+                        "OptionInvalidError or OptionsInvalidError."
+                        "\nIt is recommended to use the `raise_invalid` method "
+                        "of the passed in option or options instance."
+                    )
+                )
         else:
             if isinstance(result, six.string_types):
                 self.raise_invalid(value=self.value, message=result)
@@ -485,30 +409,28 @@ class Option(Configurable, Child):
         - Checking/validating the default values should be performed in the
           option configuration `validate_configuration` method.
         """
-        if self._value is None:
-            if self.required:
-                if self.default is not None:
-                    logger.warn(
-                        "The unspecified option %s is required but also "
-                        "specifies a default - the default makes the option "
-                        "requirement obsolete." % self.field
-                    )
-                    # Validate the default value - this should be being done in
-                    # the validate_configuration method of the OptionConfiguration
-                    # class.
-                    if self.default is None and not self.allow_null:
-                        raise Exception()
-                else:
-                    self.raise_required()
-            else:
-                if not self.allow_null:
-                    pass
-        else:
-            # NEED TO FINISH THIS
-            if self.enforce_types is not None:
-                if not isinstance(self.value, self.enforce_types):
-                    self.raise_invalid_type()
-
+        # # This logic needs to be double checked.
+        # if self.value.value is None:
+        #     # TODO: Do we want to enforce types when the value is None?
+        #     if self.types is not None:
+        #         assert self.types != ()
+        #         self.raise_invalid_type()
+        #     if self.value.required:
+        #         self.raise_required()
+        #     else:
+        #         if not self.value.defaulted:
+        #             # TODO: Allow null should be moved to the value itself.
+        #             # Should allow null count when the value is also defaulted?
+        #             if not self.allow_null:
+        #                 raise Exception()
+        #         else:
+        #             pass
+        # else:
+        #     if self.types is not None:
+        #         assert self.types != ()
+        #         if not isinstance(self.value, self.types):
+        #             self.raise_invalid_type()
+        # TODO: Maybe we should move this logic to the Value instance.
         if self.validate is not None:
             self._do_user_provided_validation(self.validate, 'validate')
 
@@ -565,7 +487,7 @@ class Option(Configurable, Child):
         assert self.configured
 
         default_configuration = self.configurations['default']
-        types_configuration = self.configurations['enforce_types']
+        types_configuration = self.configurations['types']
         required_configuration = self.configurations['required']
 
         assert (
@@ -574,11 +496,15 @@ class Option(Configurable, Child):
         )
 
         # If the default value is provided, ensure that the default value conforms
-        # to the types specified by `enforce_types` if they are provided.
+        # to the types specified by `types` if they are provided.
+
+        # TODO: It would be nice if we could access the full Value instance by
+        # .value internally, and exposed the value.value publically (by altering
+        # how the Child/Parent instances work).
         if default_configuration.configured:
             if not types_configuration.conforms_to(default_configuration.value):
                 default_configuration.raise_invalid_type(
-                    types=self.enforce_types,
+                    types=self.types,
                     message=(
                         "If enforcing that the option be of type {types}, "
                         "the default value must also be of the same types."
@@ -586,16 +512,16 @@ class Option(Configurable, Child):
                 )
         # If the default value is not explicitly provided but the option is not
         # required, make sure that the default-default value conforms to the types
-        # specified by `enforce_types` if they are provided.
+        # specified by `types` if they are provided.
         elif required_configuration.value is False:
             if not types_configuration.conforms_to(default_configuration.value):
                 # TODO: We should figure out a more user-friendly way around this,
                 # perhaps an additional configuration variable that only enforces
                 # types if provided.
                 types_configuration.raise_invalid(message=(
-                    "If the option is not required but `enforce_types` is "
+                    "If the option is not required but `types` is "
                     "specified, the default value, in this case None, must also "
-                    "conform to the types specified by `enforce_types`.  Either "
+                    "conform to the types specified by `types`.  Either "
                     "make the option required or provide a default that conforms "
                     "to the types."
                 ))
