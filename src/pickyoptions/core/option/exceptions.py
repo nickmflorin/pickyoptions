@@ -17,26 +17,27 @@ class OptionError(PickyOptionsError):
     specific `obj:Option`.
     """
     identifier = "Option Error"
+    default_injection = {"name": "value"}
 
 
 class OptionNotConfiguredError(NotConfiguredError, OptionError):
     identifier = "Option Not Configured"
-    default_message = "The option for field `{field}` is not yet configured."
+    default_message = "The option {name} is not yet configured."
 
 
 class OptionConfiguringError(ConfiguringError, OptionError):
     identifier = "Option Configuring Error"
-    default_message = "The option for field `{field}` is already configuring."
+    default_message = "The option {name} is already configuring."
 
 
 class OptionConfigurationError(ConfigurationError, OptionError):
     identifier = "Option Configuration Error"
-    default_message = "The option for field `{field}` is already configuring."
+    default_message = "The option {name} is already configuring."
 
 
 class OptionLockedError(ValueLockedError, OptionError):
     default_message = (
-        "The option for field `{field}` is locked and thus cannot be "
+        "The option {name} is locked and thus cannot be "
         "changed after it's initial population."
     )
 
@@ -47,7 +48,7 @@ class OptionNotSetError(ValueNotSetError, OptionError):
     that require that the `obj:Option` was set.
     """
     identifier = "Option Not Set"
-    default_message = "The option for field `{field}` has not been set yet."
+    default_message = "The option {name} has not been set yet."
 
 
 class OptionDoesNotExist(DoesNotExistError, OptionError):
@@ -62,7 +63,7 @@ class OptionDoesNotExist(DoesNotExistError, OptionError):
     False.
     """
     identifier = "Unrecognized Option"
-    default_message = "There is no configured option for field `{field}`."
+    default_message = "There is no configured option {name}."
 
 
 class OptionInvalidError(ValueInvalidError, OptionError):
@@ -70,7 +71,7 @@ class OptionInvalidError(ValueInvalidError, OptionError):
     Base class for all exceptions that are raised when a an option value is
     invalid.
     """
-    default_message = "The option for field `{field}` is invalid."
+    default_message = "The option {name} is invalid."
     identifier = "Invalid Option"
 
 
@@ -79,8 +80,7 @@ class OptionRequiredError(ValueRequiredError, OptionError):
     Raised when an option value is required but not specified.
     """
     identifier = "Required Option"
-    default_message = (
-        "The option for field `{field}` is required, but was not provided.")
+    default_message = "The option {name} is required, but was not provided."
 
 
 class OptionTypeError(ValueTypeError, OptionInvalidError):
@@ -88,12 +88,12 @@ class OptionTypeError(ValueTypeError, OptionInvalidError):
     Raised when an option value is required to be of a specific type but is not
     of that type.
     """
+    # Required to be specified because of the inheritance pattern.
+    identifier = "Invalid Option"
+
     @property
     def default_message(self):
-        if len(self.types) != 0:
-            if getattr(self, 'field', None) is not None:
-                return "The option for field `{field}` must be of type {types}."
-            return "The option must be of type {types}."
-        if getattr(self, 'field', None) is not None:
-            return "The option for field `{field}` is not of the correct type."
-        return "The option is of invalid type."
+        types = getattr(self, 'types', None)
+        if types:
+            return "The option {name} must be of type {types}."
+        return "The option {name} is not of the correct type."

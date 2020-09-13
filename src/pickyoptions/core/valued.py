@@ -7,9 +7,6 @@ from pickyoptions import constants, settings
 from .base import BaseModel
 from .child import Child
 from .configuration import SimpleConfigurable
-from .exceptions import (
-    ValueNotSetError, ValueRequiredError, ValueLockedError,
-    ValueInvalidError, ValueTypeError)
 from .routine import Routine
 from .utils import accumulate_errors
 
@@ -25,17 +22,41 @@ class Value(Child, SimpleConfigurable):
     # figure out a way to fix that.
     child_identifier = "field"
 
-    def __init__(self, field, parent, **kwargs):
+    def __init__(
+        self,
+        field,
+        parent,
+        configuration_error=None,
+        not_set_error=None,
+        required_error=None,
+        invalid_type_error=None,
+        invalid_error=None,
+        locked_error=None,
+        **kwargs
+    ):
         self._value = constants.NOTSET
         self._defaulted = constants.NOTSET
         self._set = False
         self._field = field
 
-        Child.__init__(self, parent=parent)
+        Child.__init__(
+            self,
+            parent=parent,
+            not_set_error=not_set_error,
+            required_error=required_error,
+            invalid_type_error=invalid_type_error,
+            invalid_error=invalid_error,
+            locked_error=locked_error,
+        )
+
+        # TODO: Rethink the configuration on init, maybe make it lazy.
         kwargs['configure_on_init'] = True
         SimpleConfigurable.__init__(self, **kwargs)
 
         self.defaulting_routine = Routine(id="defaulting")
+
+        self.configuration_error = configuration_error
+        assert self.configuration_error is not None
 
     def _configure(
         self,
@@ -47,12 +68,6 @@ class Value(Child, SimpleConfigurable):
         post_set=None,
         types=None,
         allow_null=False,
-        not_set_error=None,
-        required_error=None,
-        locked_error=None,
-        invalid_error=None,
-        invalid_type_error=None,
-        configuration_error=None,
     ):
         self._default = default
         self._required = required
@@ -62,15 +77,6 @@ class Value(Child, SimpleConfigurable):
         self._post_set = post_set
         self._types = types
         self._allow_null = allow_null
-
-        self.not_set_error = not_set_error or ValueNotSetError
-        self.required_error = required_error or ValueRequiredError
-        self.locked_error = locked_error or ValueLockedError
-        self.invalid_type_error = invalid_type_error or ValueTypeError
-        self.invalid_error = invalid_error or ValueInvalidError
-
-        self.configuration_error = configuration_error
-        assert self.configuration_error is not None
 
     @property
     def field(self):

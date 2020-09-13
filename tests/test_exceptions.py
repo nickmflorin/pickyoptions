@@ -1,4 +1,4 @@
-from pickyoptions.core.exceptions import PickyOptionsError, ObjectTypeError
+from pickyoptions.core.exceptions import PickyOptionsError, ValueTypeError
 from pickyoptions.core.option.exceptions import OptionTypeError
 
 
@@ -25,21 +25,24 @@ def test_picky_options_error():
     )
 
 
-def test_object_type_error():
-    exc = ObjectTypeError(types=(str, int))
-    assert str(exc) == "\nMust be of type (<class 'str'>, <class 'int'>)."
-
-    exc = ObjectTypeError(field="test-field", types=(str, int))
+def test_value_type_error():
+    exc = ValueTypeError(types=(str, int))
     assert str(exc) == (
-        "\nThe field `test-field` must be of type "
+        "\n\033[1mInvalid Value Type\033[0;0m: The value must be of type "
         "(<class 'str'>, <class 'int'>)."
+    )
+
+    exc = ValueTypeError(name="test-field", types=(str, int))
+    assert str(exc) == (
+        "\n\033[1mInvalid Value Type\033[0;0m: The test-field "
+        "must be of type (<class 'str'>, <class 'int'>)."
     )
 
 
 def test_option_type_error():
-    exc = OptionTypeError(field='option-field', types=(str, int))
+    exc = OptionTypeError(name='option-field', types=(str, int))
     assert str(exc) == (
-        "\n\033[1mInvalid Option\033[0;0m: The option for field `option-field` "
+        "\n\033[1mInvalid Option\033[0;0m: The option option-field "
         "must be of type (<class 'str'>, <class 'int'>)."
     )
 
@@ -64,3 +67,15 @@ def test_children_errors():
         "\n--> (1) (field = child-field-1) This is a child error message."
         "\n--> (2) (field = child-field-2) This is a child error message."
     )
+
+
+def test_default_injection():
+    class TestError(PickyOptionsError):
+        default_injection = {"name": "test-name"}
+        default_message = "The {name} is invalid."
+
+    exc = TestError()
+    assert str(exc) == "\nThe test-name is invalid."
+
+    exc = TestError(name='new-name')
+    assert str(exc) == "\nThe new-name is invalid."

@@ -88,14 +88,14 @@ class Configuration(Child, SimpleConfigurable):
       the default.
     """
     # Child Implementation Properties
-    invalid_child_error = ConfigurationInvalidError
-    invalid_child_type_error = ConfigurationTypeError
-    required_child_error = ConfigurationRequiredError
+    invalid_error = ConfigurationInvalidError
+    invalid_type_error = ConfigurationTypeError
+    required_error = ConfigurationRequiredError
+    not_set_error = ConfigurationNotSetError
     parent_cls = 'Configurations'
     child_identifier = 'field'
 
     # SimpleConfigurable Implementation Properties
-    # cannot_reconfigure_error = ConfigurationCannotReconfigureError
     not_configured_error = ConfigurationNotConfiguredError
     configuring_error = ConfigurationConfiguringError
 

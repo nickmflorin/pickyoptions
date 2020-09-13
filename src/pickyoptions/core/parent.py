@@ -2,10 +2,11 @@ import logging
 import six
 
 from pickyoptions import settings
+from pickyoptions.lib.utils import extends_or_instance_of
 
 from .base import BaseModel
 from .child import Child
-from .exceptions import ObjectTypeError, ParentHasChildError, DoesNotExistError
+from .exceptions import ValueTypeError, ParentHasChildError, DoesNotExistError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -48,7 +49,7 @@ class Parent(BaseModel):
 
     def raise_if_child_missing(self, child):
         if not self.has_child(child):
-            self.raise_no_child(field=(
+            self.raise_no_child(name=(
                 child if isinstance(child, six.string_types)
                 else getattr(child, self.child_identifier)
             ))
@@ -64,39 +65,14 @@ class Parent(BaseModel):
         self.add_children(children)
 
     def validate_child(self, child):
-        if not isinstance(child, Child):
-            raise ObjectTypeError(
+        assert isinstance(child, Child)
+        if not extends_or_instance_of(child, self.child_cls):
+            # TODO: Come up with a better error.
+            raise ValueTypeError(
                 value=child,
-                message=(
-                    "The child must be an extension of %s."
-                    % Child.__class__.__name__,
-                ),
-                types=Child
+                message="The child must be of type `{types}`.",
+                types=self.child_cls,
             )
-        elif isinstance(self.child_cls, six.string_types):
-            if child.__class__.__name__ != self.child_cls:
-                raise ObjectTypeError(
-                    value=child,
-                    message="The child must be of type `{types}`.",
-                    types=self.child_cls,
-                )
-        elif hasattr(self.child_cls, '__iter__'):
-            assert all([isinstance(v, six.string_types) for v in self.child_cls])
-            if child.__class__.__name__ not in self.child_cls:
-                raise ObjectTypeError(
-                    value=child,
-                    message="The child must be of type `{types}`.",
-                    types=self.child_cls
-                )
-        elif isinstance(self.child_cls, type):
-            if not isinstance(child, self.child_cls):
-                raise ObjectTypeError(
-                    value=child,
-                    message="The child must be of type `{types}`.",
-                    types=type(self.child_cls),
-                )
-        else:
-            raise ValueError("Invalid Child")
 
     def child_value(self, child):
         if self._child_value is None:
@@ -145,7 +121,7 @@ class Parent(BaseModel):
             #         "The attribute `%s` does not exist on the %s instance."
             #         % (identifier, self.__class__.__name__)
             #     )
-            self.raise_child_does_not_exist(field=identifier)
+            self.raise_child_does_not_exist(name=identifier)
 
     def new_children(self, children):
         self.remove_children()

@@ -58,27 +58,6 @@ class Configurations(Parent, SimpleConfigurable):
         If the `obj:Configuration` does not exist,
         `obj:ConfigurationDoesNotExist` will be raised.
         """
-        # This is an annoying side effect of using ABCMeta
-        # if self.has_child(k):
-        #     configuration = super(Configurations, self).__getattr__(k)
-        #
-        #     # Keep these as sanity checks for the time being - although this logic
-        #     # is likely duplicate and should be removed.
-        #     if configuration.required:
-        #         if configuration.value_instance.set:
-        #             assert not configuration.value_instance.defaulted
-        #         # This seems to be causing problems when we try to access the
-        #         # field configuration from the configurations at times when the
-        #         # field configuration is not configured.  We should change the field
-        #         # to not be a configuration.
-        #         # assert configuration.configured
-        #     return configuration
-        # try:
-        #     assert self.configured
-        # except AssertionError:
-        #     import ipdb; ipdb.set_trace()
-        # assert self.configured
-
         # TODO: Should part of this be moved to a parent configurable/simple
         # configurable class?
         configuration = super(Configurations, self).__getattr__(k)
@@ -92,7 +71,7 @@ class Configurations(Parent, SimpleConfigurable):
             # field configuration from the configurations at times when the
             # field configuration is not configured.  We should change the field
             # to not be a configuration.
-            # assert configuration.configured
+            assert configuration.configured
         return configuration
 
     def __setattr__(self, k, v):

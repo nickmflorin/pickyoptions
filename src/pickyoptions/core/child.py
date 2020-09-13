@@ -5,7 +5,14 @@ from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
 from .base import BaseModel
-from .exceptions import PickyOptionsError, ObjectTypeError
+from .exceptions import (
+    PickyOptionsError,
+    ValueTypeError,
+    ValueNotSetError,
+    ValueRequiredError,
+    ValueInvalidError,
+    ValueLockedError
+)
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -17,11 +24,24 @@ class Child(BaseModel):
         'child_identifier',
     )
 
-    def __init__(self, parent=None):
+    not_set_error = ValueNotSetError
+    required_error = ValueRequiredError
+    invalid_type_error = ValueTypeError
+    invalid_error = ValueInvalidError
+    locked_error = ValueLockedError
+
+    def __init__(self, parent=None, **kwargs):
         self._assigned = False
         self._parent = None
         if parent is not None:
             self.assign_parent(parent)
+
+        self.not_set_error = kwargs.get('not_set_error', self.not_set_error)
+        self.invalid_type_error = kwargs.get(
+            'invalid_type_error', self.invalid_type_error)
+        self.required_error = kwargs.get('required_error', self.required_error)
+        self.invalid_error = kwargs.get('invalid_error', self.invalid_error)
+        self.locked_error = kwargs.get('locked_error', self.locked_error)
 
     @property
     def assigned(self):
@@ -43,14 +63,14 @@ class Child(BaseModel):
             self.raise_not_set(*args, **kwargs)
 
     def raise_not_set(self, *args, **kwargs):
-        kwargs.setdefault('cls', getattr(self, 'child_not_set_error', None))
+        kwargs.setdefault('cls', getattr(self, 'not_set_error'))
         return self.raise_with_self(*args, **kwargs)
 
     def raise_invalid(self, *args, **kwargs):
         """
         Raises an exception to indicate that the `obj:Child` instance is invalid.
         """
-        kwargs.setdefault('cls', getattr(self, 'invalid_child_error', None))
+        kwargs.setdefault('cls', getattr(self, 'invalid_error'))
         return self.raise_with_self(*args, **kwargs)
 
     def raise_invalid_type(self, *args, **kwargs):
@@ -58,7 +78,8 @@ class Child(BaseModel):
         Raises an exception to indicate that the `obj:Child` instance is of
         invalid type.
         """
-        kwargs.setdefault('cls', getattr(self, 'invalid_child_type_error', None))
+        assert 'types' in kwargs
+        kwargs.setdefault('cls', getattr(self, 'invalid_type_error'))
         return self.raise_invalid(*args, **kwargs)
 
     def raise_required(self, *args, **kwargs):
@@ -66,7 +87,7 @@ class Child(BaseModel):
         Raises an exception to indicate that the `obj:Child` instance is
         required and does not exist.
         """
-        kwargs.setdefault('cls', getattr(self, 'required_child_error', None))
+        kwargs.setdefault('cls', getattr(self, 'required_error'))
         return self.raise_invalid(*args, **kwargs)
 
     @property
@@ -93,7 +114,7 @@ class Child(BaseModel):
     def validate_parent(self, parent):
         if not extends_or_instance_of(parent, self.parent_cls):
             # TODO: Come up with a better error.
-            raise ObjectTypeError(
+            raise ValueTypeError(
                 value=parent,
                 message="The parent must be of type `{types}`.",
                 types=self.parent_cls,

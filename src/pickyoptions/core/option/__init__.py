@@ -17,6 +17,7 @@ from pickyoptions.core.configuration.exceptions import (
 from pickyoptions.core.configuration.configuration_lib import (
     TypesConfiguration)
 
+from pickyoptions.core.exceptions import ValueInvalidError, ValueTypeError
 from pickyoptions.core.routine import Routine, Routines
 from pickyoptions.core.valued import Valued
 
@@ -140,28 +141,26 @@ class Option(Configurable, Child, Valued):
         self._field = field
 
         if not isinstance(self._field, six.string_types):
-            # TODO: This won't work, come up with a better exception handler.
-            self.raise_invalid_type(types=six.string_types)
+            raise ValueTypeError(
+                name="field",
+                types=six.string_types,
+            )
         elif self._field.startswith('_'):
-            # TODO: This won't work, come up with a better exception handler.
-            self.raise_invalid(
-                message="Cannot be scoped as a private attribute.")
+            raise ValueInvalidError(
+                name="field",
+                detail="It cannot be scoped as a private attribute."
+            )
 
         self.routines = Routines(
             Routine(id='populating'),
             Routine(id='overriding'),
             Routine(id='restoring')
-        )
-        Valued.__init__(self, field, **kwargs)
 
-        # Initializing Configurable will configure the instance and validate the
-        # configuration, so the Value needs to be set before this otherwise
-        # it will not be able to acess the configuration values.
+        )
+
         Configurable.__init__(self, **kwargs)
-        # The child needs to be initialized after the option is configured,
-        # because the child will use the `field` value (which is configured) to
-        # uniquely identify the child.
         Child.__init__(self, parent=kwargs.pop('parent', None))
+        Valued.__init__(self, field, **kwargs)
 
     @property
     def field(self):
@@ -409,27 +408,6 @@ class Option(Configurable, Child, Valued):
         - Checking/validating the default values should be performed in the
           option configuration `validate_configuration` method.
         """
-        # # This logic needs to be double checked.
-        # if self.value.value is None:
-        #     # TODO: Do we want to enforce types when the value is None?
-        #     if self.types is not None:
-        #         assert self.types != ()
-        #         self.raise_invalid_type()
-        #     if self.value.required:
-        #         self.raise_required()
-        #     else:
-        #         if not self.value.defaulted:
-        #             # TODO: Allow null should be moved to the value itself.
-        #             # Should allow null count when the value is also defaulted?
-        #             if not self.allow_null:
-        #                 raise Exception()
-        #         else:
-        #             pass
-        # else:
-        #     if self.types is not None:
-        #         assert self.types != ()
-        #         if not isinstance(self.value, self.types):
-        #             self.raise_invalid_type()
         # TODO: Maybe we should move this logic to the Value instance.
         if self.validate is not None:
             self._do_user_provided_validation(self.validate, 'validate')
@@ -483,6 +461,12 @@ class Option(Configurable, Child, Valued):
         entire `obj:Option` is configured.  On the other hand, individual
         configuration validation routines are performed when the `obj:Option`
         is configured with each individual configuration value.
+
+        TODO:
+        ----
+        Maybe we should put this method in the context of the
+        `obj:Configurations`, not the `obj:Option` - and pass it into the
+        `obj:Configurations` on initialization.
         """
         assert self.configured
 
@@ -497,14 +481,14 @@ class Option(Configurable, Child, Valued):
 
         # If the default value is provided, ensure that the default value conforms
         # to the types specified by `types` if they are provided.
-
-        # TODO: It would be nice if we could access the full Value instance by
-        # .value internally, and exposed the value.value publically (by altering
-        # how the Child/Parent instances work).
+        # TODO: Should we be checking if default_configuration.set here?  This
+        # will not be validating against default values for the default
+        # configuration.
         if default_configuration.configured:
             if not types_configuration.conforms_to(default_configuration.value):
                 default_configuration.raise_invalid_type(
                     types=self.types,
+                    value=default_configuration.value,
                     message=(
                         "If enforcing that the option be of type {types}, "
                         "the default value must also be of the same types."

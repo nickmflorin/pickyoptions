@@ -74,8 +74,7 @@ def test_validate_options_on_population():
     with pytest.raises(OptionsInvalidError) as e:
         options.populate(width=5.0, height=1.0, color='green')
     assert str(e.value) == (
-        "\n\033[1mInvalid Options\033[0;0m: (instance = <Options "
-        "state=POPULATED color=green, height=1.0, width=5.0>) The height must "
+        "\n\033[1mInvalid Options\033[0;0m: The height must "
         "be greater than the width."
     )
 
@@ -97,8 +96,7 @@ def test_validate_options_on_override():
         options.override(width=5.0)
 
     assert str(e.value) == (
-        "\n\033[1mInvalid Options\033[0;0m: (instance = <Options "
-        "state=POPULATED color=green, height=4.0, width=5.0>) The height "
+        "\n\033[1mInvalid Options\033[0;0m: The height "
         "must be greater than the width."
     )
 
