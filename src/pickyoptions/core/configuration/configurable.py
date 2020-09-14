@@ -2,8 +2,7 @@ from copy import deepcopy
 import logging
 
 from pickyoptions import settings
-from pickyoptions.core.base import BaseModel
-from pickyoptions.core.routine import Routine
+from pickyoptions.core.routine import Routine, Routined
 from pickyoptions.core.routine.constants import RoutineState
 
 from .exceptions import NotConfiguredError, ConfiguringError
@@ -12,38 +11,39 @@ from .exceptions import NotConfiguredError, ConfiguringError
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class SimpleConfigurable(BaseModel):
+class SimpleConfigurable(Routined):
     not_configured_error = NotConfiguredError
     configuring_error = ConfiguringError
 
     abstract_methods = ('_configure', )
 
-    def __init__(self, **kwargs):
-        self.configuration_routine = Routine(
-            self,
-            id='configuring',
+    def __init__(self):
+        Routined.__init__(self)
+        self.create_routine(
+            id="configuration",
             pre_routine=self.pre_configuration,
             post_routine=self.post_configuration
         )
 
-        # TODO: Consider removing the ability to configure on init.
-        configure_on_init = kwargs.pop('configure_on_init', False)
-        if configure_on_init:
-            self.configure(**kwargs)
-
     def configure(self, *args, **kwargs):
-        with self.configuration_routine:
+        if self.__class__.__name__ == "Options":
+            assert all([x.configured for x in list(self.children)])  # Temporary
+        with self.routines.configuration:
+            if self.__class__.__name__ == "Options":
+                assert all([x.configured for x in list(self.children)])  # Temporary
             self._configure(*args, **kwargs)
 
     @property
     def configuration_state(self):
-        return self.configuration_routine.state
+        return self.routines.configuration.state
 
     @property
     def configured(self):
-        if self.configuration_routine.finished:
-            assert self.configuration_state == RoutineState.FINISHED
-        return self.configuration_routine.finished
+        # NOTE: This is a little misleading.  In the case that the object is
+        # already configured but is being reconfigured, the state will be
+        # IN_PROGRESS but it was actually already configured.  We should find
+        # a better way to indicate that.
+        return self.configuration_state == RoutineState.FINISHED
 
     @property
     def not_configured(self):
@@ -54,11 +54,11 @@ class SimpleConfigurable(BaseModel):
 
     @property
     def configuring(self):
-        if self.configuration_routine.in_progress:
+        if self.routines.configuration.in_progress:
             assert self.configuration_state == RoutineState.IN_PROGRESS
-        return self.configuration_routine.in_progress
+        return self.routines.configuration.in_progress
 
-    @Routine.require_not_in_progress
+    @Routine.require_not_in_progress(id="configuration")
     def pre_configuration(self):
         logger.debug("Performing pre-configuration.")
         if self.configured:
@@ -66,7 +66,7 @@ class SimpleConfigurable(BaseModel):
         else:
             logger.debug("Configuring %s." % self.__class__.__name__)
 
-    @Routine.require_finished
+    @Routine.require_finished(id="configuration")
     def post_configuration(self):
         logger.debug("Done configuring %s." % self.__class__.__name__)
 
@@ -97,7 +97,6 @@ class Configurable(SimpleConfigurable):
 
     def __init__(self, **kwargs):
         super(Configurable, self).__init__()
-
         # The __setattr__ on models is sometimes overridden.
         configurations = deepcopy(self.configurations)
         # Set the validation routine of the `obj:Configurations`.
@@ -112,6 +111,7 @@ class Configurable(SimpleConfigurable):
         assert self.configurations.configured
 
     def post_configuration(self):
+        super(Configurable, self).post_configuration()
         assert self.configured
         assert self.configurations.configured
         self.validate_configuration()

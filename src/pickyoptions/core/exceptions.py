@@ -180,10 +180,6 @@ class PickyOptionsError(Exception):
         return self.full_message
 
 
-class ParentHasChildError(PickyOptionsError):
-    default_message = "The parent already has the child in it's children."
-
-
 class DoesNotExistError(PickyOptionsError, AttributeError):
     """
     NOTE:
@@ -193,43 +189,3 @@ class DoesNotExistError(PickyOptionsError, AttributeError):
     False.
     """
     default_message = "The attribute `{field}` does not exist on the instance."
-
-
-class PickyOptionsValueError(PickyOptionsError, ValueError):
-    pass
-
-
-class ValueNotSetError(PickyOptionsValueError):
-    default_message = "The {name} has not been set yet."
-    default_injection = {"name": "value"}
-
-
-class ValueLockedError(PickyOptionsValueError):
-    default_message = "The {name} is locked and cannot be changed."
-    default_injection = {"name": "value"}
-
-
-class ValueRequiredError(PickyOptionsValueError):
-    default_message = "The {name} is required."
-    default_injection = {"name": "value"}
-
-
-class ValueInvalidError(PickyOptionsValueError):
-    identifier = "Invalid Value"
-    default_message = "The {name} is invalid."
-    default_injection = {"name": "value"}
-
-
-class ValueTypeError(ValueInvalidError):
-    default_injection = {"name": "value"}
-    identifier = "Invalid Value Type"
-
-    def __init__(self, *args, **kwargs):
-        kwargs['types'] = ensure_iterable(kwargs.get('types'))
-        super(ValueTypeError, self).__init__(*args, **kwargs)
-
-    @property
-    def default_message(self):
-        if len(self.types) != 0:
-            return "The {name} must be of type {types}."
-        return "The {name} is not of the correct type."

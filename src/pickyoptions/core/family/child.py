@@ -4,9 +4,9 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from .base import BaseModel
-from .exceptions import (
-    PickyOptionsError,
+from pickyoptions.core.base import BaseModel
+from pickyoptions.core.exceptions import PickyOptionsError
+from pickyoptions.core.value.exceptions import (
     ValueTypeError,
     ValueNotSetError,
     ValueRequiredError,
@@ -18,11 +18,8 @@ from .exceptions import (
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Child(BaseModel):
-    abstract_properties = (
-        'parent_cls',
-        'child_identifier',
-    )
+class OnlyChild(BaseModel):
+    abstract_properties = ('parent_cls', )
 
     not_set_error = ValueNotSetError
     required_error = ValueRequiredError
@@ -42,21 +39,6 @@ class Child(BaseModel):
         self.required_error = kwargs.get('required_error', self.required_error)
         self.invalid_error = kwargs.get('invalid_error', self.invalid_error)
         self.locked_error = kwargs.get('locked_error', self.locked_error)
-
-    @property
-    def assigned(self):
-        return self._assigned
-
-    @property
-    def identifier(self):
-        child_identifier = getattr(self, 'child_identifier')
-        if six.callable(child_identifier):
-            return child_identifier(self)
-        return getattr(self, child_identifier)
-
-    def raise_with_self(self, *args, **kwargs):
-        kwargs.setdefault('field', self.identifier)
-        super(Child, self).raise_with_self(*args, **kwargs)
 
     def assert_set(self, *args, **kwargs):
         if not self.set:
@@ -89,6 +71,10 @@ class Child(BaseModel):
         """
         kwargs.setdefault('cls', getattr(self, 'required_error'))
         return self.raise_invalid(*args, **kwargs)
+
+    @property
+    def assigned(self):
+        return self._assigned
 
     @property
     def parent(self):
@@ -169,3 +155,18 @@ class Child(BaseModel):
                 )
 
         self._assigned = True
+
+
+class Child(OnlyChild):
+    abstract_properties = OnlyChild.abstract_properties + ('child_identifier',)
+
+    @property
+    def identifier(self):
+        child_identifier = getattr(self, 'child_identifier')
+        if six.callable(child_identifier):
+            return child_identifier(self)
+        return getattr(self, child_identifier)
+
+    def raise_with_self(self, *args, **kwargs):
+        kwargs.setdefault('field', self.identifier)
+        super(Child, self).raise_with_self(*args, **kwargs)

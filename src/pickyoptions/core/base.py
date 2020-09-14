@@ -5,6 +5,7 @@ import logging
 import six
 
 from pickyoptions import settings
+
 from .exceptions import PickyOptionsError
 
 
@@ -62,6 +63,9 @@ class BaseModel(six.with_metaclass(BaseModelMeta)):
     @property
     def initialized(self):
         return self._initialized
+
+    def create_routine(self, **kwargs):
+        pass
 
     def raise_with_self(self, *args, **kwargs):
         cls = kwargs.pop('cls', PickyOptionsError)

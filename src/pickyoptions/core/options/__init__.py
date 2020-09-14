@@ -7,16 +7,16 @@ import sys
 from pickyoptions import settings
 
 from pickyoptions.core.base import track_init
-from pickyoptions.core.configuration import (
-    Configuration, Configurable, Configurations)
+from pickyoptions.core.configuration import Configuration, Configurations
+from pickyoptions.core.configuration.configurable import Configurable
 from pickyoptions.core.configuration.configuration_lib import (
     CallableConfiguration)
-
 from pickyoptions.core.option import Option
 from pickyoptions.core.option.exceptions import (
     OptionDoesNotExist, OptionInvalidError)
-from pickyoptions.core.parent import Parent
-from pickyoptions.core.routine import Routine, Routines
+from pickyoptions.core.family import Parent
+from pickyoptions.core.routine import Routine
+from pickyoptions.core.routine.routined import Routined
 
 from .constants import OptionsState
 from .exceptions import (
@@ -71,7 +71,7 @@ class OptionsRoutine(Routine):
         instance.do_post_process()
 
 
-class Options(Configurable, Parent):
+class Options(Configurable, Parent, Routined):
     """
     The entry point for using pickyoptions in a project.
 
@@ -151,30 +151,31 @@ class Options(Configurable, Parent):
     @track_init
     def __init__(self, *args, **kwargs):
         self._state = OptionsState.NOT_INITIALIZED
-        # Set the `obj:Routine`(s) associated with the `obj:Options`.
-        self.routines = Routines(
-            OptionsRoutine(
-                self,
-                id='populating',
-                post_routine=self.post_populate
-            ),
-            OptionsRoutine(
-                self,
-                id='overriding',
-                post_routine=self.post_override
-            ),
-            OptionsRoutine(
-                self,
-                id='restoring',
-                post_routine=self.post_restore
-            )
-        )
+        Routined.__init__(self)
+        assert all([x.configured for x in list(args)])  # Temporary
         Parent.__init__(
             self,
             children=list(args),
             child_value=lambda child: child.value
         )
+        assert all([x.configured for x in list(args)])  # Temporary
         Configurable.__init__(self, **kwargs)
+        assert all([x.configured for x in list(args)])  # Temporary
+        self.create_routine(
+            id="populating",
+            cls=OptionsRoutine,
+            post_routine=self.post_populate
+        )
+        self.create_routine(
+            id="overriding",
+            cls=OptionsRoutine,
+            post_routine=self.post_override
+        )
+        self.create_routine(
+            id="restoring",
+            cls=OptionsRoutine,
+            post_routine=self.post_restore
+        )
 
     def finish_init(self):
         self._state = OptionsState.NOT_POPULATED
@@ -311,6 +312,7 @@ class Options(Configurable, Parent):
                 # date `obj:Options` when the routine finishes. This needs to
                 # happen regardless of whether or not the option is in the data.
                 assert option not in routine.queue
+                option.assert_configured()
                 routine.add_to_queue(option)
 
                 if option.field in data:
@@ -378,7 +380,7 @@ class Options(Configurable, Parent):
                     all_overridden_options.append(option)
         return all_overridden_options
 
-    @Routine.require_finished(routine='populating')
+    @Routine.require_finished(id='populating')
     def restore(self):
         """
         Resets the `obj:Options` instance to it's state immediately after it was
@@ -431,11 +433,16 @@ class Options(Configurable, Parent):
         values until they are set.
         """
         self._state = OptionsState.NOT_POPULATED
-        self.routines.reset()
+        # If initialized, all of the routines we want to reset will be present.
+        # Otherwise, it will just be the configuration routine - which we don't
+        # want to reset.  Do we have to worry about the defaulting routine?
+        assert 'defaulting' not in [routine.id for routine in self.routines]
+        if self.initialized:
+            self.routines.reset(ids=['populating', 'overriding', 'restoring'])
         for option in self.options:
             option.reset()
 
-    @Routine.require_finished(routine='populating')
+    @Routine.require_finished(id='populating')
     def do_validate(self):
         """
         Validates the overall `obj:Options` instance (after the children
@@ -536,7 +543,7 @@ class Options(Configurable, Parent):
                         )
                     self.raise_invalid(message=result)
 
-    @Routine.require_finished(routine='populating')
+    @Routine.require_finished(id='populating')
     def do_post_process(self, children=None):
         """
         Performs the post-process routine for the overall `obj:Options` instance
@@ -567,7 +574,7 @@ class Options(Configurable, Parent):
             logger.debug("Post processing options")
             self.post_process(self)
 
-    @Routine.require_finished(routine='populating')
+    @Routine.require_finished(id='populating')
     def local_override(self, func):
         """
         Decorator for functions that allows the global options to be temporarily

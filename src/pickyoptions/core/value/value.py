@@ -1,45 +1,51 @@
 import logging
-import six
-
-from pickyoptions.lib.utils import ensure_iterable
+import inspect
 
 from pickyoptions import constants, settings
-from pickyoptions.core.exceptions import ValueInvalidError, ValueTypeError
+from pickyoptions.lib.utils import ensure_iterable, get_class_from_frame
 
-from .base import BaseModel
-from .child import Child
-from .configuration import SimpleConfigurable
-from .routine import Routine
-from .utils import accumulate_errors
+from pickyoptions.core.configuration.configurable import SimpleConfigurable
+from pickyoptions.core.configuration.exceptions import ConfigurationError
+from pickyoptions.core.family.child import Child
+from pickyoptions.core.utils import accumulate_errors
+
+from .exceptions import (
+    ValueInvalidError, ValueTypeError, ValueLockedError, ValueNotSetError,
+    ValueRequiredError, ValueSetError, ValueNotRequiredError)
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 class Value(Child, SimpleConfigurable):
+    # Child implementation properties.
     parent_cls = ('Option', 'Configuration')
 
     # Note: This isn't used here because the child is not grouped into a
     # parent with multiple children, but it is necessary for ABC.  We should
     # figure out a way to fix that.
+    # ---> Come up with a SingleChild class that doesn't have those reqs.
     child_identifier = "field"
 
+    # TODO: Incorporate extensions/flexibility of ValueSetError and
+    # ValueNotRequiredError.
     def __init__(
         self,
-        field,
         parent,
-        configuration_error=None,
-        not_set_error=None,
-        required_error=None,
-        invalid_type_error=None,
-        invalid_error=None,
-        locked_error=None,
+        field,
+        configuration_error=ConfigurationError,
+        not_set_error=ValueNotSetError,
+        required_error=ValueRequiredError,
+        invalid_type_error=ValueTypeError,
+        invalid_error=ValueInvalidError,
+        locked_error=ValueLockedError,
         **kwargs
     ):
         self._value = constants.NOTSET
         self._defaulted = False
         self._set = False
         self._field = field
+        self.configuration_error = configuration_error
 
         Child.__init__(
             self,
@@ -50,58 +56,67 @@ class Value(Child, SimpleConfigurable):
             invalid_error=invalid_error,
             locked_error=locked_error,
         )
+        # TODO: Consider making configuration happen in SimpleConfigurable, or
+        # making it lazy.
+        SimpleConfigurable.__init__(self)
+        # Note that SimpleConfigurable implements Routined already.
+        self.create_routine(
+            id="defaulting",
+            post_routine=self.post_default,
+            pre_routine=self.pre_default,
+        )
+        self.configure(**kwargs)
 
-        # TODO: Rethink the configuration on init, maybe make it lazy.
-        kwargs['configure_on_init'] = True
-        SimpleConfigurable.__init__(self, **kwargs)
-
-        self.defaulting_routine = Routine(self, id="defaulting")
-
-        self.configuration_error = configuration_error
-        assert self.configuration_error is not None
-
-    def _configure(
-        self,
-        validate=None,
-        normalize=None,
-        required=False,
-        default=constants.NOTSET,
-        locked=False,
-        post_set=None,
-        types=None,
-        allow_null=False,
-    ):
+    def _configure(self, default=constants.NOTSET, required=False,
+            allow_null=True, locked=False, types=None, normalize=None,
+            post_set=None, validate=None):
+        # TODO: We might want to eventually move the validate and post_process
+        # to the Valued instance...  But then we would have to be concerned with
+        # including the instance and other arguments in the call.
         self._default = default
         self._required = required
-        self._locked = locked
-        self._validate = validate
-        self._normalize = normalize
-        self._post_set = post_set
-        self._types = types
         self._allow_null = allow_null
+        self._locked = locked
+        self._types = types
+        self._post_set = post_set
+        self._normalize = normalize
+        self._validate = validate
 
     @property
     def field(self):
         return self._field
 
-    @property
-    def defaulting(self):
-        return self.defaulting_routine.in_progress
-
     def assert_set(self, *args, **kwargs):
         if not self.set:
             self.raise_not_set(*args, **kwargs)
+
+    def assert_not_set(self, *args, **kwargs):
+        if self.set:
+            self.raise_set(*args, **kwargs)
+
+    def assert_required(self, *args, **kwargs):
+        if not self.required:
+            self.raise_not_required(*args, **kwargs)
+
+    def assert_not_required(self, *args, **kwargs):
+        if self.required:
+            self.raise_required(*args, **kwargs)
 
     def raise_with_self(self, *args, **kwargs):
         # The Child class method raise_with_self is currently being called,
         # so we are duplicating the field - but this is setting it as the default
         # so I think we are okay, although the logic should be cleaned up.
-        kwargs.setdefault('field', self.field)
+        kwargs.setdefault('name', self.field)
         kwargs.setdefault('instance', self.parent)
         super(Value, self).raise_with_self(*args, **kwargs)
 
     def raise_not_set(self, *args, **kwargs):
         kwargs['cls'] = self.not_set_error
+        return self.raise_with_self(*args, **kwargs)
+
+    def raise_set(self, *args, **kwargs):
+        # TODO: Come up with extensions for the specific object.
+        kwargs['cls'] = ValueSetError
         return self.raise_with_self(*args, **kwargs)
 
     def raise_locked(self, *args, **kwargs):
@@ -110,6 +125,11 @@ class Value(Child, SimpleConfigurable):
 
     def raise_required(self, *args, **kwargs):
         kwargs['cls'] = self.required_error
+        return self.raise_with_self(*args, **kwargs)
+
+    def raise_not_required(self, *args, **kwargs):
+        # TODO: Come up with extensions for the specific object.
+        kwargs['cls'] = ValueNotRequiredError
         return self.raise_with_self(*args, **kwargs)
 
     def raise_invalid(self, *args, **kwargs):
@@ -146,8 +166,14 @@ class Value(Child, SimpleConfigurable):
 
     @property
     def default(self):
-        # TODO: Should we return the NOTSET here?
-        self.assert_set()
+        # TODO: Should we return the NOTSET here?  Maybe not, if we are
+        # checking that it was set.
+        self.assert_configured()
+        if not self.default_provided:
+            self.assert_not_required()
+            assert self._default == constants.NOTSET
+            return None
+        assert self._default != constants.NOTSET
         return self._default
 
     @property
@@ -158,32 +184,138 @@ class Value(Child, SimpleConfigurable):
         """
         return self._default != constants.NOTSET
 
+    def pre_default(self):
+        # TODO: Should we reset _defaulted here?
+        self.assert_not_required()
+
+    def post_default(self):
+        # TODO: Do we need to worry about resetting this value to False in the
+        # case that a non-default argument is provided?
+        self._defaulted = True
+
     @property
     def defaulted(self):
         """
         Returns whether or not the instance has been defaulted.
         """
         # TODO: Cleanup this logic.
+        # TODO: Should we maybe disallow access of this property if the defaultign
+        # routine is in progress?
         self.assert_set()
-        if self._default == constants.NOTSET:
-            assert self._defaulted is False
-        if self.defaulting_routine.finished:
-            assert self._defaulted is True
+        # NOTE: This might cause hairy behavior in the case that we are
+        # re-defaulting the value (or setting the value to a non-default after
+        # it has been defaulted the first time).
+        return self.routines.defaulting.finished
+
+        # # ?
+        # if self.default_provided:
+        #     assert self._defaulted is False
+        # if self.defaulting_routine.finished:
+        #     assert self._defaulted is True
+        # else:
+        #     # This assertion fails when the defaulting routine is IN_PROGRESS,
+        #     # the assertion is coming from the value setter when it is being
+        #     # defaulted.
+        #     assert self._defaulted is False
+        # return self._defaulted
+
+    @property
+    def defaulting(self):
+        return self.routines.defaulting.in_progress
+
+    @property
+    def value(self):
+        # TODO: Implement allow null checks.
+        # TODO: Do we return the default here if the value is not provided?
+        self.assert_set()
+        assert self._value != constants.NOTSET
+
+        if self._value is None:
+            try:
+                assert not self.required
+                assert self.default_provided
+            except AssertionError:
+                import ipdb; ipdb.set_trace()
+            return self.normalize(self.default)
+
+        # This really only counts in the `obj:Option` case.
+        return self.normalize(self._value)
+
+    # TODO: The logic here needs to be cleaned up.
+    # TODO: Incorporate allow_null checks.
+    @value.setter
+    def value(self, value):
+        # TODO: Consider making the setting of the value a routine itself.
+        self.assert_configured()
+
+        # TODO: What do we do if the value is being set to a default or None
+        # after it has already been set?
+        if self.set:
+            logger.debug("Overriding already set value.")
+
+        # The value can be being set to None even if it is not the default.
+        if value is None:
+            self.assert_not_required()
+            # self.assert_allow_null()
+            if self.defaulting:
+                # The value of defaulted will be set to True when the routine
+                # finishes.
+                self._value = None
+            else:
+                # If the default is also None, but we are not defaulting, do
+                # we want to set the state as having been defaulted?
+                if self.default == value:
+                    logger.debug(
+                        "The default is None, but we are also setting to "
+                        "None explicitly... We have to be careful here."
+                    )
+                    raise Exception()  # Temporary - for sanity.
+                self._value = value
         else:
-            assert self._defaulted is False
-        return self._defaulted
+            if self.set:
+                if self.defaulted:
+                    # TODO: What do we do in the case that the value is being
+                    # defaulted to the same value that it is already set to?
+                    if self.default == value:
+                        logger.debug(
+                            "The default is None, but we are also setting to "
+                            "None explicitly... We have to be careful here."
+                        )
+                        raise Exception()  # Temporary - for sanity.
+                    # We now have to clear the defaulted state!
+                    self.routines.defaulting.reset()
+                    self._value = value
+                if value != self._value:
+                    logger.debug(
+                        "Not changing value since it is already set with "
+                        "the same value."
+                    )
+                else:
+                    self._value = value
+            else:
+                if self.default == value:
+                    logger.debug(
+                        "The default is None, but we are also setting to "
+                        "None explicitly... We have to be careful here."
+                    )
+                    raise Exception()  # Temporary - for sanity.
+                self._value = value
+
+        self._set = True
+        self.validate()
+        self.post_set(value)
 
     def set_default(self):
-        if self.set:
-            # TODO: Update the exception.
-            # TODO: Do we want to keep this check?
-            raise ValueError(
-                "Cannot set default on option when it has already been set.")
-        with self.defaulting_routine:
+        # TODO: We should maybe lax this requirement, and figure out if it is
+        # truly necessary.
+        self.assert_not_set(message=(
+            "Cannot set the default when it has already been set."
+        ))
+        with self.routines.defaulting:
             self.value = None
 
     def reset(self):
-        self.defaulting_routine.reset()
+        self.routines.defaulting.reset()
         self._value = constants.NOTSET
         self._defaulted = False
         self._set = False
@@ -196,46 +328,6 @@ class Value(Child, SimpleConfigurable):
         if self._normalize is not None:
             return self._normalize(value, self.parent)
         return value
-
-    @property
-    def value(self):
-        # TODO: Implement allow null checks.
-        # TODO: Do we return the default here if the value is not provided?
-        self.assert_set()
-        assert self._value != constants.NOTSET
-
-        if self._value is None:
-            assert not self.required
-            assert self.default_provided
-            return self.normalize(self.default)
-
-        # This really only counts in the `obj:Option` case.
-        return self.normalize(self._value)
-        # if self._value is None:
-        #     assert not self.required
-        #     # assert self.allow_null
-        #     return self.normalize(self.default)
-        # return self.normalize(self._value)
-
-    @value.setter
-    def value(self, value):
-        self.assert_configured()
-
-        self._defaulted = False
-        if self.defaulting_routine.in_progress:
-            self._defaulted = True
-            assert not self.required
-
-        if value is None:
-            assert not self.required
-            # The value may or may not have been set yet at this point.
-            if self.set:
-                assert self.defaulted is True
-
-        self._value = value
-        self._set = True
-        self.validate()
-        self.post_set(value)
 
     def validate(self):
         """
@@ -271,11 +363,14 @@ class Value(Child, SimpleConfigurable):
             if not isinstance(self.value, self.types):
                 self.raise_invalid_type()
 
-        # if self._validate is not None:
-        #
-        #     # The default value is already validated against the method in the
-        #     # validate_configuration method.
-        #     self._validate(self._value, self)
+        # If the validate method is being called from the parent class, we don't
+        # want to call the parent provided validation method since it will
+        # will introduce an infinite recursion.
+        frame = inspect.stack()[1][0]
+        cls = get_class_from_frame(frame)
+        if cls != self.parent.__class__:
+            if self._validate is not None:
+                self._validate()
 
     @accumulate_errors(error_cls='configuration_error')
     def validate_configuration(self):
@@ -295,6 +390,10 @@ class Value(Child, SimpleConfigurable):
             provided if it is not `None`?  This would allow us to have a
             non-required value type checked if it is provided.  This would be a
             useful configuration for the `obj:Option` and `obj:Options`.
+        (2) Not only do we need to validate against the default value, we need
+            to validate against the normalized default value!
+        (3) We need to do the validation with options against the default value
+            and the default normalized value.
         """
         # What about reconfiguration?
         assert self.configured is False
@@ -379,111 +478,3 @@ class Value(Child, SimpleConfigurable):
                     message="The default value is not of type %s." % self.types,
                     value=self.default
                 )
-
-
-class Valued(BaseModel):
-    abstract_properties = (
-        'not_set_error',
-        'locked_error',
-        'required_error',
-        'configuration_error',
-        'invalid_error',
-        'invalid_type_error',
-    )
-
-    # TODO: Should we be implementing the user provided validate method in the
-    # post set of this class?
-    abstract_methods = ('post_set', )
-
-    def __init__(self, field, **kwargs):
-        self._field = field
-        if not isinstance(self._field, six.string_types):
-            raise ValueTypeError(
-                name="field",
-                types=six.string_types,
-            )
-        elif self._field.startswith('_'):
-            raise ValueInvalidError(
-                name="field",
-                detail="It cannot be scoped as a private attribute."
-            )
-
-        # NOTE: The field here seems to only be needed for referencing exceptions,
-        # maybe there is a better way to do this.
-        self.value_instance = Value(
-            field,
-            self,
-            not_set_error=self.not_set_error,
-            locked_error=self.locked_error,
-            required_error=self.required_error,
-            configuration_error=self.configuration_error,
-            invalid_error=self.invalid_error,
-            invalid_type_error=self.invalid_type_error,
-            required=kwargs.get('required'),
-            allow_null=kwargs.get('allow_null'),
-            types=kwargs.get('types'),
-            locked=kwargs.get('locked'),
-            default=kwargs.get('default'),
-            validate=kwargs.get('validate'),
-            normalize=kwargs.get('normalize'),
-            post_set=self.post_set
-        )
-
-    @property
-    def field(self):
-        return self._field
-
-    @property
-    def value(self):
-        # NOTE: The `obj:Configuration` may or may not be configured at this
-        # point, because if the configuration is not present in the provided data
-        # it is not technically considered configured.
-        return self.value_instance.value
-
-    @value.setter
-    def value(self, value):
-        self.value_instance.value = value
-
-    @property
-    def types(self):
-        iterable = ensure_iterable(self._types)
-        if len(iterable) != 0:
-            return iterable
-        return None
-
-    @property
-    def set(self):
-        return self.value_instance.set
-
-    @property
-    def locked(self):
-        return self.value_instance.locked
-
-    @property
-    def required(self):
-        return self.value_instance.required
-
-    @property
-    def default(self):
-        return self.value_instance.default
-
-    @property
-    def default_provided(self):
-        """
-        Returns whether or not the instance has been explicitly initialized
-        with a default value.
-        """
-        return self.value_instance.default_provided
-
-    @property
-    def defaulted(self):
-        """
-        Returns whether or not the instance has been defaulted.
-        """
-        return self.value_instance.defaulted
-
-    def set_default(self):
-        self.value_instance.set_default()
-
-    def validate_value(self):
-        self.value_instance.validate()

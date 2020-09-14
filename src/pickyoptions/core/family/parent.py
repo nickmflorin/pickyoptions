@@ -4,9 +4,12 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from .base import BaseModel
+from pickyoptions.core.base import BaseModel
+from pickyoptions.core.exceptions import DoesNotExistError
+from pickyoptions.core.value.exceptions import ValueTypeError
+
 from .child import Child
-from .exceptions import ValueTypeError, ParentHasChildError, DoesNotExistError
+from .exceptions import ParentHasChildError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -26,6 +29,10 @@ class Parent(BaseModel):
         children = children or []
         for child in children:
             self.assign_child(child)
+
+        # Temporary
+        if children[0].__class__.__name__ == "Option":
+            assert all([x.configured for x in self.children])  # Temporary
 
     def __getattr__(self, k):
         child = self.get_child(k)

@@ -3,8 +3,8 @@ import logging
 from pickyoptions import settings
 
 from pickyoptions.core.base import track_init
-from pickyoptions.core.child import Child
-from pickyoptions.core.valued import Valued
+from pickyoptions.core.family import Child
+from pickyoptions.core.value.valued import Valued
 
 from .configurable import SimpleConfigurable
 from .exceptions import (
@@ -119,29 +119,45 @@ class Configuration(Child, SimpleConfigurable, Valued):
     def __init__(self, field, parent=None, **kwargs):
         Child.__init__(self, parent=parent)
         SimpleConfigurable.__init__(self)
+        # When we pass in the parent, the validate methods will be called with
+        # the parent instance.  What do we want to do here?
+        # Note that the validate method is being passed in here?  This is
+        # different from the option case, where it is not passed in?
+        # NOTE: We need to pass in the post_set here...
         Valued.__init__(self, field, **kwargs)
 
     def _configure(self, value):
         self.value = value
 
+    def set_default(self):
+        self.value_instance.set_default()
+
     def __repr__(self):
-        # TODO: I don't think we have a state on the Configuration anymore?
-        if self.configured:
-            return (
-                "<{cls_name} state={state} field={field} value={value}>".format(
-                    cls_name=self.__class__.__name__,
-                    field=self.field,
-                    value=self.value,
-                    state=self.state,
+        #  TODO: Clean this up!
+        # We can't necessarily access configured unless it is initialized with the
+        # routine.
+        if self.initialized:
+            if self.configured:
+                return (
+                    "<{cls_name} state={state} field={field} value={value}>".format(
+                        cls_name=self.__class__.__name__,
+                        field=self.field,
+                        value=self.value,
+                        state=self.configuration_state,
+                    )
                 )
+            return "<{cls_name} state={state} field={field}>".format(
+                cls_name=self.__class__.__name__,
+                field=self.field,
+                state=self.configuration_state,
             )
+        # The field might not be present yet if it is not initialized.
         # The field attribute won't be available until the `obj:Configuration`
         # is configured - not anymore, the field is set as the first line of the
         # init.
-        return "<{cls_name} state={state} field={field}>".format(
+        return "<{cls_name} state={state}>".format(
             cls_name=self.__class__.__name__,
-            state=self.state,
-            field=self.field,
+            state="NOT_INITIALIZED"
         )
 
     def post_set(self, value):

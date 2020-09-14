@@ -1,3 +1,4 @@
+import inspect
 import six
 
 from .arrays import *  # noqa
@@ -18,6 +19,23 @@ def classlookup(cls):
     for base in c:
         c.extend(classlookup(base))
     return c
+
+
+# TODO: Make Python2.7/3 Compatible.
+def get_class_from_frame(fr):
+    """
+    Given a frame in the stack, returns the class local to the frame.  This is
+    used so we can determine who the caller of a given method is when there
+    is circular calling dependencies between parent/child classes.
+    """
+    args, _, _, value_dict = inspect.getargvalues(fr)
+    # Check the first parameter of the frame function is named `self` - if it is,
+    # `self` will be referenced in `value_dict`.
+    if len(args) != 0 and args[0] == 'self':
+        instance = value_dict.get('self', None)
+        if instance:
+            return getattr(instance, '__class__', None)
+    return None
 
 
 def extends_or_instance_of(child, parent):

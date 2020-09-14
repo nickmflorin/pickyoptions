@@ -1,8 +1,12 @@
-from pickyoptions.core.exceptions import PickyOptionsError
+from pickyoptions.core.exceptions import PickyOptionsError, DoesNotExistError
 
 
 class RoutineError(PickyOptionsError):
-    pass
+    identifier = "Routine Error"
+
+
+class RoutineDoesNotExistError(DoesNotExistError, RoutineError):
+    default_message = "The routine {id} does not exist."
 
 
 class RoutineNotFinishedError(RoutineError):

@@ -1,9 +1,9 @@
 import logging
 
-from pickyoptions import settings, constants
+from pickyoptions import settings
 
 from pickyoptions.core.base import track_init
-from pickyoptions.core.parent import Parent
+from pickyoptions.core.family import Parent
 
 from .configurable import SimpleConfigurable
 from .configuration import Configuration
@@ -38,7 +38,7 @@ class Configurations(Parent, SimpleConfigurable):
                 cls_name=self.__class__.__name__
             )
         return "<{cls_name} state={state}>".format(
-            state=constants.NOT_INITIALIZED,
+            state="NOT_INITIALIZED",
             cls_name=self.__class__.__name__
         )
 
@@ -138,7 +138,7 @@ class Configurations(Parent, SimpleConfigurable):
                 # since the value was not explicitly provided.  It will
                 # however validate that the configuration is not required
                 # before proceeding.
-                configuration.value = None
+                configuration.set_default()
 
     @property
     def explicitly_set_configurations(self):
