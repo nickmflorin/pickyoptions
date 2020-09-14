@@ -1,8 +1,10 @@
 import logging
+import six
 
 from pickyoptions.lib.utils import ensure_iterable
 
 from pickyoptions import constants, settings
+from pickyoptions.core.exceptions import ValueInvalidError, ValueTypeError
 
 from .base import BaseModel
 from .child import Child
@@ -35,7 +37,7 @@ class Value(Child, SimpleConfigurable):
         **kwargs
     ):
         self._value = constants.NOTSET
-        self._defaulted = constants.NOTSET
+        self._defaulted = False
         self._set = False
         self._field = field
 
@@ -53,7 +55,7 @@ class Value(Child, SimpleConfigurable):
         kwargs['configure_on_init'] = True
         SimpleConfigurable.__init__(self, **kwargs)
 
-        self.defaulting_routine = Routine(id="defaulting")
+        self.defaulting_routine = Routine(self, id="defaulting")
 
         self.configuration_error = configuration_error
         assert self.configuration_error is not None
@@ -81,6 +83,10 @@ class Value(Child, SimpleConfigurable):
     @property
     def field(self):
         return self._field
+
+    @property
+    def defaulting(self):
+        return self.defaulting_routine.in_progress
 
     def assert_set(self, *args, **kwargs):
         if not self.set:
@@ -161,6 +167,10 @@ class Value(Child, SimpleConfigurable):
         self.assert_set()
         if self._default == constants.NOTSET:
             assert self._defaulted is False
+        if self.defaulting_routine.finished:
+            assert self._defaulted is True
+        else:
+            assert self._defaulted is False
         return self._defaulted
 
     def set_default(self):
@@ -169,12 +179,13 @@ class Value(Child, SimpleConfigurable):
             # TODO: Do we want to keep this check?
             raise ValueError(
                 "Cannot set default on option when it has already been set.")
-        with self.defaulting_routine(self):
+        with self.defaulting_routine:
             self.value = None
 
     def reset(self):
+        self.defaulting_routine.reset()
         self._value = constants.NOTSET
-        self._defaulted = constants.NOTSET
+        self._defaulted = False
         self._set = False
 
     def post_set(self, value):
@@ -376,11 +387,27 @@ class Valued(BaseModel):
         'locked_error',
         'required_error',
         'configuration_error',
-        'invalid_error'
+        'invalid_error',
+        'invalid_type_error',
     )
+
+    # TODO: Should we be implementing the user provided validate method in the
+    # post set of this class?
     abstract_methods = ('post_set', )
 
     def __init__(self, field, **kwargs):
+        self._field = field
+        if not isinstance(self._field, six.string_types):
+            raise ValueTypeError(
+                name="field",
+                types=six.string_types,
+            )
+        elif self._field.startswith('_'):
+            raise ValueInvalidError(
+                name="field",
+                detail="It cannot be scoped as a private attribute."
+            )
+
         # NOTE: The field here seems to only be needed for referencing exceptions,
         # maybe there is a better way to do this.
         self.value_instance = Value(
@@ -391,6 +418,7 @@ class Valued(BaseModel):
             required_error=self.required_error,
             configuration_error=self.configuration_error,
             invalid_error=self.invalid_error,
+            invalid_type_error=self.invalid_type_error,
             required=kwargs.get('required'),
             allow_null=kwargs.get('allow_null'),
             types=kwargs.get('types'),
@@ -400,6 +428,10 @@ class Valued(BaseModel):
             normalize=kwargs.get('normalize'),
             post_set=self.post_set
         )
+
+    @property
+    def field(self):
+        return self._field
 
     @property
     def value(self):

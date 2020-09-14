@@ -4,7 +4,7 @@ import logging
 import six
 import sys
 
-from pickyoptions import settings, constants
+from pickyoptions import settings
 
 from pickyoptions.core.base import track_init
 from pickyoptions.core.configuration import (
@@ -18,6 +18,7 @@ from pickyoptions.core.option.exceptions import (
 from pickyoptions.core.parent import Parent
 from pickyoptions.core.routine import Routine, Routines
 
+from .constants import OptionsState
 from .exceptions import (
     OptionsInvalidError, OptionsNotConfiguredError, OptionsConfiguringError)
 
@@ -149,14 +150,35 @@ class Options(Configurable, Parent):
 
     @track_init
     def __init__(self, *args, **kwargs):
+        self._state = OptionsState.NOT_INITIALIZED
+        # Set the `obj:Routine`(s) associated with the `obj:Options`.
         self.routines = Routines(
-            OptionsRoutine(id='populating'),
-            OptionsRoutine(id='overriding'),
-            OptionsRoutine(id='restoring')
+            OptionsRoutine(
+                self,
+                id='populating',
+                post_routine=self.post_populate
+            ),
+            OptionsRoutine(
+                self,
+                id='overriding',
+                post_routine=self.post_override
+            ),
+            OptionsRoutine(
+                self,
+                id='restoring',
+                post_routine=self.post_restore
+            )
         )
-        Parent.__init__(self,
-            children=list(args), child_value=lambda child: child.value)
+        Parent.__init__(
+            self,
+            children=list(args),
+            child_value=lambda child: child.value
+        )
         Configurable.__init__(self, **kwargs)
+
+    def finish_init(self):
+        self._state = OptionsState.NOT_POPULATED
+        super(Options, self).finish_init()
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -167,13 +189,15 @@ class Options(Configurable, Parent):
             object.__setattr__(result, k, deepcopy(v, memo))
         return result
 
+    def __call__(self, *args, **kwargs):
+        self.populate(*args, **kwargs)
+
     def __repr__(self):
-        # TODO: Keep track of state of `obj:Options` with attribute...
         if self.initialized:
-            if self.routines.populating.finished:
+            if self.populated:
                 return "<{cls_name} state={state} {params}>".format(
                     cls_name=self.__class__.__name__,
-                    state=constants.POPULATED,
+                    state=self.state,
                     params=", ".join([
                         "{k}={v}".format(k=k, v=v)
                         for k, v in self.zipped
@@ -181,46 +205,28 @@ class Options(Configurable, Parent):
                 )
             return "<{cls_name} state={state} [{options}]>".format(
                 cls_name=self.__class__.__name__,
-                state=constants.NOT_POPULATED,
+                state=self.state,
                 options=", ".join([option.field for option in self.children])
             )
         return "<{cls_name} state={state}>".format(
-            state=constants.NOT_INITIALIZED,
+            state=self.state,
             cls_name=self.__class__.__name__
         )
 
     def __getattr__(self, k):
-        # TODO: Revisit this - do we even want to be checking for the underscore?
-        # Do we need to be checking if the options are initialized?
-        if settings.DEBUG and k.startswith('_'):
-            raise AttributeError(
-                "The %s instance does not have attribute %s."
-                % (self.__class__.__name__, k)
-            )
-        # TODO: Should this part be moved to configurable?
-        # WARNING: This might break if there is a configuration that is named the
-        # same as an option - we should prevent that.
-        # If the value is referring to a configuration, return the configuration
-        # value.
-        self.assert_configured()
-
-        if self.configured and self.configurations.has_child(k):
+        if self.configurations.has_child(k):
+            self.assert_configured()
             configuration = getattr(self.configurations, k)
             return configuration.value
 
         # We have to assume that the value is referring to an `obj:Option`.
-        # The return of the super() method is the `obj:Option` value, not the
-        # `obj:Option` itself.=
         option_value = super(Options, self).__getattr__(k)
         if not self.routines.populating.finished:
             self.raise_not_populated()
         return option_value
 
-    def __call__(self, *args, **kwargs):
-        self.populate(*args, **kwargs)
-
     def __setattr__(self, k, v):
-        if not self.initialized:
+        if not self.initialized or k.startswith('_'):
             object.__setattr__(self, k, v)
         else:
             assert self.configured
@@ -233,6 +239,22 @@ class Options(Configurable, Parent):
                 option.value = v
                 self.do_validate()
                 self.do_post_process()
+
+    @property
+    def state(self):
+        return self._state
+
+    @property
+    def populated(self):
+        if self.routines.populating.did_run:
+            assert self.state != OptionsState.NOT_POPULATED
+        return self.routines.populating.did_run
+
+    @property
+    def overridden(self):
+        if self.routines.populating.did_run:
+            assert self.state != OptionsState.POPULATED_NOT_OVERRIDDEN
+        return self.routines.overriding.did_run
 
     def get_option(self, k):
         return self.get_child(k)
@@ -273,7 +295,6 @@ class Options(Configurable, Parent):
         Populates the configured `obj:Options` instance with values for each
         defined `obj:Option`.
         """
-        assert len(self.routines.populating.queue) == 0
         self.reset()
 
         data = dict(*args, **kwargs)
@@ -282,7 +303,7 @@ class Options(Configurable, Parent):
         for k, _ in data.items():
             self.raise_if_child_missing(k)
 
-        with self.routines.populating(self) as routine:
+        with self.routines.populating as routine:
             for option in self.options:
                 # Add the `obj:Option` to the queue of `obj:Option`(s) that were
                 # populated in a given routine so we can track which options need
@@ -302,23 +323,24 @@ class Options(Configurable, Parent):
                     # This will set the default on the `obj:Option` if it is not
                     # required.  It will also validate that the option is not
                     # required before proceeding any further.
-                    # TODO: Does setting None on the value work the same way?
                     option.set_default()
+
+    def post_populate(self):
+        assert self.state == OptionsState.NOT_POPULATED
+        self._state = OptionsState.POPULATED_NOT_OVERRIDDEN
 
     def override(self, *args, **kwargs):
         """
         Overrides the configured `obj:Options` instance with values for each
         defined `obj:Option`.
         """
-        # Note that we do not reset the overriding queue.
-        assert self.routines.overriding.queue == []
         data = dict(*args, **kwargs)
 
         # Make sure that no invalid options provided.
         for k, _ in data.items():
             self.raise_if_child_missing(k)
 
-        with self.routines.overriding(self) as routine:
+        with self.routines.overriding as routine:
             for k, v in data.items():
                 option = self.get_child(k)
                 option.override(v)
@@ -333,6 +355,13 @@ class Options(Configurable, Parent):
             # routine, so the state of the `obj:Options` can be reverted back to
             # a previous override or not overrides at all.
             routine.store(routine.queue)
+
+    def post_override(self):
+        assert self.state in (
+            OptionsState.POPULATED_NOT_OVERRIDDEN,
+            OptionsState.POPULATED_OVERRIDDEN
+        )
+        self._state = OptionsState.POPULATED_OVERRIDDEN
 
     def clear_override(self):
         raise NotImplementedError()
@@ -366,7 +395,7 @@ class Options(Configurable, Parent):
         """
         # Currently, resetting the restoring routine is not necessary/does not
         # have an affect, but  we will still do it for purposes of consistency.
-        # Down the line, it might be important  to do so.
+        # Down the line, it might be important to do so.
         self.routines.restoring.reset()
 
         # TODO: Should we maybe just check the number of options in the override
@@ -377,16 +406,18 @@ class Options(Configurable, Parent):
                 % self.__class__.__name__)
             return
 
-        with self.routines.restoring(self) as routine:
+        with self.routines.restoring as routine:
             # Restore the options that were at any point overridden.
             for option in self.overridden_options:
                 option.restore()
-                # I don't think we really need to do these, but for completenes
-                # sake we will.
+                # These are currently not necessary to do, but may in the future.
                 routine.add_to_queue(option)
                 routine.store(option)
 
         self.routines.overriding.clear_history()
+
+    def post_restore(self):
+        self._state = OptionsState.POPULATED_NOT_OVERRIDDEN
 
     def reset(self):
         """
@@ -399,6 +430,7 @@ class Options(Configurable, Parent):
         required options will not be set anymore, so we cannot access their
         values until they are set.
         """
+        self._state = OptionsState.NOT_POPULATED
         self.routines.reset()
         for option in self.options:
             option.reset()

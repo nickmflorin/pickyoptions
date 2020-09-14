@@ -1,8 +1,5 @@
-import contextlib
 import functools
 import logging
-import six
-import sys
 
 from pickyoptions import settings
 from pickyoptions.lib.utils import optional_parameter_decorator
@@ -10,7 +7,7 @@ from pickyoptions.core.base import BaseModel
 
 from .constants import RoutineState
 from .exceptions import (
-    RoutineStartedError, RoutineNotFinishedError, RoutineInProgressError,
+    RoutineNotFinishedError, RoutineInProgressError,
     RoutineNotInProgressError)
 from .routines import Routines  # noqa
 
@@ -18,34 +15,71 @@ from .routines import Routines  # noqa
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
+@optional_parameter_decorator
+def require_not_in_progress(func, routine=None):
+    """
+    Decorator to decorate routine related methods that require that the
+    specified routine's state is not IN_PROGRESS.
+    """
+    @functools.wraps(func)
+    def inner(instance, *args, **kwargs):
+        if routine:
+            routine_instance = getattr(instance.routines, routine)
+        else:
+            routine_instance = instance
+        assert isinstance(routine_instance, Routine)
+        if routine_instance.in_progress:
+            routine_instance.raise_in_progress()
+        return func(instance, *args, **kwargs)
+    return inner
+
+
+@optional_parameter_decorator
+def require_finished(func, routine=None):
+    """
+    Decorator to decorate routine related methods that require that the
+    specified routine's state is FINISHED.
+    """
+    @functools.wraps(func)
+    def inner(instance, *args, **kwargs):
+        if routine:
+            routine_instance = getattr(instance.routines, routine)
+        else:
+            routine_instance = instance
+        assert isinstance(routine_instance, Routine)
+        if not routine_instance.finished:
+            routine_instance.raise_not_finished()
+        return func(instance, *args, **kwargs)
+    return inner
+
+
 class Routine(BaseModel):
-    def __init__(self, id, pre_routine=None, post_routine=None):
+    require_not_in_progress = require_not_in_progress
+    require_finished = require_finished
+
+    def __init__(self, instance, id, pre_routine=None, post_routine=None):
+        self._instance = instance
         self._id = id
         self._state = RoutineState.NOT_STARTED
-        self._queue = []
         self._history = []
+        self._queue = []
         self._pre_routine = pre_routine
         self._post_routine = post_routine
 
-    @contextlib.contextmanager
-    def __call__(self, instance):
-        assert len(self.queue) == 0
-        self.pre_routine(instance)
+    def __enter__(self):
+        logger.debug("Entering routine %s context." % self.id)
+        assert len(self._queue) == 0
+        self.pre_routine(self._instance)
         self._state = RoutineState.IN_PROGRESS
-        try:
-            logger.debug("Entering routine context.")
-            yield self
-        except Exception:
-            six.reraise(*sys.exc_info())
-        else:
-            self._state = RoutineState.FINISHED
-            # Populated will only be False before the first population,
-            # afterwards it will always be True, until the options are reset.
-            # self._populated = True
-            # self._populated_value = constants.NOTSET
+        return self
 
-            self.post_routine(instance)
-            logger.debug("Exiting population routine context.")
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.debug("Exiting routine %s context." % self.id)
+        self._state = RoutineState.FINISHED
+        if exc_type:
+            return False
+        self.post_routine(self._instance)
+        return False
 
     @property
     def id(self):
@@ -83,30 +117,53 @@ class Routine(BaseModel):
     def started(self):
         return not self.not_started
 
+    @property
+    def did_run(self):
+        return self.in_progress or self.finished
+
+    @require_finished
     def post_routine(self, instance):
-        if not self.finished:
-            self.raise_not_finished()
+        """
+        Performs operations that are meant to occur just after the
+        `obj:Routine` finishes.
+
+        Calls the provied post_routine method if it is provided and clears
+        the progress queue of the `obj:Routine`.
+        """
         logger.debug('Performing post-routine %s on %s.' % (
             self.__class__.__name__, instance.__class__.__name__))
+
         if self._post_routine:
-            self._post_routine(self._instance)
+            self._post_routine()
+
         self.clear_queue()
 
+    @require_not_in_progress
     def pre_routine(self, instance):
+        """
+        Performs operations that are meant to occur just before the
+        `obj:Routine` starts and calls the provied pre_routine method if it
+        is provided.
+
+        NOTE:
+        ----
+        Note that the `obj:Routine`'s state will only ever be NOT_STARTED
+        before the first time it is run, so we cannot enforce that the
+        pre_routine require the state be NOT_STARTED.
+        """
         logger.debug('Performing pre-routine %s on %s.' % (
             self.__class__.__name__, instance.__class__.__name__))
-        assert len(self.queue) == 0
-        if self._pre_routine:
-            self._pre_routine(instance)
 
-    def raise_started(self, *args, **kwargs):
-        kwargs.update(
-            cls=RoutineStartedError,
-            id=self.id
-        )
-        self.raise_with_self(*args, **kwargs)
+        # The queue should have already been cleared by the post_routine.
+        assert len(self.queue) == 0
+
+        if self._pre_routine:
+            self._pre_routine()
 
     def raise_in_progress(self, *args, **kwargs):
+        """
+        Raises an error to indicate that the `obj:Routine` is in progress.
+        """
         kwargs.update(
             cls=RoutineInProgressError,
             id=self.id
@@ -114,13 +171,29 @@ class Routine(BaseModel):
         self.raise_with_self(*args, **kwargs)
 
     def raise_not_in_progress(self, *args, **kwargs):
+        """
+        Raises an error to indicate that the `obj:Routine` is not in progress.
+        """
         kwargs.update(
             cls=RoutineNotInProgressError,
             id=self.id
         )
         self.raise_with_self(*args, **kwargs)
 
+    def raise_finished(self, *args, **kwargs):
+        """
+        Raises an error to indicate that the `obj:Routine` has not finished.
+        """
+        kwargs.update(
+            cls=RoutineNotFinishedError,
+            id=self.id
+        )
+        self.raise_with_self(*args, **kwargs)
+
     def raise_not_finished(self, *args, **kwargs):
+        """
+        Raises an error to indicate that the `obj:Routine` has not finished.
+        """
         kwargs.update(
             cls=RoutineNotFinishedError,
             id=self.id
@@ -128,70 +201,37 @@ class Routine(BaseModel):
         self.raise_with_self(*args, **kwargs)
 
     def add_to_queue(self, obj):
+        """
+        Adds an operated element the `obj:Routine`'s progress queue.
+        """
         self._queue.append(obj)
 
+    @require_finished
     def clear_queue(self):
-        if self.in_progress:
-            self.raise_in_progress()
-        logger.debug("Clearing queue")
+        """
+        Clears the `obj:Routine`'s progress queue.
+        """
+        logger.debug(
+            "Clearing %s items from the routine queue." % len(self._queue))
         self._queue = []
 
+    @require_not_in_progress
     def clear_history(self):
-        if self.in_progress:
-            self.raise_in_progress()
-        logger.debug("Clearing history")
+        logger.debug(
+            "Clearing %s items from the history queue." % len(self._history))
         self._history = []
 
     def reset(self):
+        """
+        Resets the `obj:Routine` by clearing it's history of operated elements.
+        """
         assert len(self.queue) == 0
         self.clear_history()
         self._state = RoutineState.NOT_STARTED
 
     def store(self, value):
+        """
+        Adds an operated element the `obj:Routine`'s history.
+        """
         assert value not in self._history
         self._history.append(value)
-
-    @staticmethod
-    @optional_parameter_decorator
-    def require_not_in_progress(func, routine=None):
-        @functools.wraps(func)
-        def inner(instance, *args, **kwargs):
-            if routine:
-                routine_instance = getattr(instance.routines, routine)
-            else:
-                routine_instance = instance
-            assert isinstance(routine_instance, Routine)
-            if routine_instance.in_progress:
-                routine_instance.raise_in_progress()
-            return func(instance, *args, **kwargs)
-        return inner
-
-    @staticmethod
-    @optional_parameter_decorator
-    def require_not_started(func, routine=None):
-        @functools.wraps(func)
-        def inner(instance, *args, **kwargs):
-            if routine:
-                routine_instance = getattr(instance.routines, routine)
-            else:
-                routine_instance = instance
-            assert isinstance(routine_instance, Routine)
-            if routine_instance.started:
-                routine_instance.raise_started()
-            return func(instance, *args, **kwargs)
-        return inner
-
-    @staticmethod
-    @optional_parameter_decorator
-    def require_finished(func, routine=None):
-        @functools.wraps(func)
-        def inner(instance, *args, **kwargs):
-            if routine:
-                routine_instance = getattr(instance.routines, routine)
-            else:
-                routine_instance = instance
-            assert isinstance(routine_instance, Routine)
-            if not routine_instance.finished:
-                routine_instance.raise_not_finished()
-            return func(instance, *args, **kwargs)
-        return inner

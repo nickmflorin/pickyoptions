@@ -5,10 +5,6 @@ class RoutineError(PickyOptionsError):
     pass
 
 
-class RoutineStartedError(RoutineError):
-    default_message = "The routine {id} has already started."
-
-
 class RoutineNotFinishedError(RoutineError):
     default_message = "The routine {id} is not finished."
 

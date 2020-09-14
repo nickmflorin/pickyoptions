@@ -16,6 +16,7 @@ class ConfigurationError(PickyOptionsError):
     """
     identifier = "Configuration Error"
     default_injection = {"name": "value"}
+    default_message = "There was an error configuring {name}."
 
 
 class NotConfiguredError(ConfigurationError):
@@ -47,22 +48,6 @@ class ConfigurationDoesNotExist(DoesNotExistError, ConfigurationError):
     False in the case that the `obj:Configuration` does not exist.
     """
     default_message = "The configuration `{name}` does not exist."
-
-
-class ConfigurationNotConfiguredError(NotConfiguredError, ConfigurationError):
-    """
-    Raised when a specific `obj:Configuration` instance is not configured yet
-    but configuration is required.
-    """
-    pass
-
-
-class ConfigurationConfiguringError(ConfiguringError):
-    """
-    Raised when a specific `obj:Configuration` instance is still in the process
-    of configuring.
-    """
-    pass
 
 
 class ConfigurationNotSetError(ValueNotSetError, ConfigurationError):

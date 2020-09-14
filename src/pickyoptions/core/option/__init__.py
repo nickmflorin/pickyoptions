@@ -17,7 +17,6 @@ from pickyoptions.core.configuration.exceptions import (
 from pickyoptions.core.configuration.configuration_lib import (
     TypesConfiguration)
 
-from pickyoptions.core.exceptions import ValueInvalidError, ValueTypeError
 from pickyoptions.core.routine import Routine, Routines
 from pickyoptions.core.valued import Valued
 
@@ -37,10 +36,74 @@ logger = logging.getLogger(settings.PACKAGE_NAME)
 
 class Option(Configurable, Child, Valued):
     """
-    Add Docstring
+    Represents a single configurable option in the `obj:Options` parent.
 
     Parameters:
     ----------
+    field: `obj:str`
+        The field that the value is associated with.
+
+    required: `obj:bool` (optional)
+        Whether or not the `obj:Option` value is required.  When the
+        `obj:Options` are populated, if the value for a required `obj:Option`
+        is not supplied an exception will be raised.
+
+        Default: False
+
+    default: `obj:object` (optional)
+        The default value for the `obj:Option` if the `obj:Option`
+        is not required and a value is not provided.
+
+        Note that this is only applicable in the case that the `obj:Option`
+        is not required.
+
+        Default: None
+
+    # TODO: Currently not implemented.
+    allow_null: `obj:bool` (optional)
+        Whether or not the `obj:Option` is allowed to take on null values.
+
+        Default: True
+
+    # TODO: Currently not implemented.
+    # TODO: Is this true?  Can we override if it is already locked?
+    locked: `obj:bool` (optional)
+        Whether or not the `obj:Option` value is allowed to be overridden.
+
+        Default: False
+
+    types: `obj:type` or `obj:list` or `obj:tuple` (optional)
+        Either a single `obj:type` or an iterable of `obj:type`(s) that the
+        `obj:Option` value must adhere to.  If the types are specified and a
+        value provided for the `obj:Option` is not of those types, an
+        exception will be raised.
+
+        It is important to note that the types are also used to check against
+        the default.
+
+        Default: None
+
+    validate: `obj:func` (optional)
+        A validation method that determines whether or not the value provided
+        for the `obj:Option` is valid.  The provided method must take the
+        raw value as it's first argumentt and the `obj:Option` as it's second
+        argument.
+
+        It is important to note that the validate method will be applied to
+        both the provided `obj:Option` value and the `obj:Option`'s - so both
+        must comply.
+
+        Default: None
+
+    normalize: `obj:func` (optional)
+        A normalization method that normalizes the provided value to the
+        `obj:Option`.
+
+        It is important to note that the normalization method will be applied to
+        both the provided `obj:Option` value and the `obj:Option`'s - so both
+        must comply.
+
+        Default: None
 
     TODO:
     ----
@@ -52,34 +115,27 @@ class Option(Configurable, Child, Valued):
     (3) The `allow_null` configuration might cause issues with the `default`
         property if the default value is None.  We should handle that more
         appropriately.
-    (4) Figure out how to add the NOTSET as a default for `default` and make it
-        publically accessible as .default with the NOTSET value pruned.
     """
     # SimpleConfigurable Implementation Properties
-    # cannot_reconfigure_error = OptionCannotReconfigureError
     not_configured_error = OptionNotConfiguredError
     configuring_error = OptionConfiguringError
+    configuration_error = OptionConfigurationError
 
     # Valued Implementation Properties
-    not_set_error = OptionNotSetError
-    locked_error = OptionLockedError
+    not_set_error = OptionNotSetError  # Also used by Child implementation
+    locked_error = OptionLockedError  # Also used by Child implementation
     required_error = OptionRequiredError  # Also used by Child implementation
-    configuration_error = OptionConfigurationError
     invalid_error = OptionInvalidError  # Also used by Child implementation
+    invalid_type_error = OptionTypeError  # Also used by Child implementation
 
     # Child Implementation Properties
     parent_cls = 'Options'
     child_identifier = "field"
     does_not_exist_error = ConfigurationDoesNotExist
-    invalid_type_error = OptionTypeError
 
     # TODO: We should consider moving this inside the instance, because it might
     # be causing code to be run unnecessarily on import.
     configurations = Configurations(
-        # If we don't provide a default value, the assertion checks in the
-        # configuration value don't work:
-        # if self._value is None:
-        #     assert self.default_provided
         Configuration('default', default=None),
         Configuration('required', types=(bool, ), default=False),
         Configuration('allow_null', types=(bool, ), default=True),
@@ -137,34 +193,15 @@ class Option(Configurable, Child, Valued):
 
     @track_init
     def __init__(self, field, **kwargs):
-        # TODO: Maybe move the field instantiation to a common class?  Valued?
-        self._field = field
-
-        if not isinstance(self._field, six.string_types):
-            raise ValueTypeError(
-                name="field",
-                types=six.string_types,
-            )
-        elif self._field.startswith('_'):
-            raise ValueInvalidError(
-                name="field",
-                detail="It cannot be scoped as a private attribute."
-            )
-
         self.routines = Routines(
-            Routine(id='populating'),
-            Routine(id='overriding'),
-            Routine(id='restoring')
+            Routine(self, id='populating'),
+            Routine(self, id='overriding'),
+            Routine(self, id='restoring')
 
         )
-
         Configurable.__init__(self, **kwargs)
         Child.__init__(self, parent=kwargs.pop('parent', None))
         Valued.__init__(self, field, **kwargs)
-
-    @property
-    def field(self):
-        return self._field
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -199,6 +236,9 @@ class Option(Configurable, Child, Valued):
     def post_set(self, value):
         # We do this here instead of at the end of the routines so these always
         # run when the value is updated.
+
+        # I think this might be causing the value to be validated twice?
+        # Isn't the validate configuration already getting called in the routine?
         self.do_validate()
         self.do_post_process()
 
@@ -240,7 +280,7 @@ class Option(Configurable, Child, Valued):
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        with self.routines.overriding(self):
+        with self.routines.overriding:
             self.value = value
 
     def populate(self, value):
@@ -248,11 +288,11 @@ class Option(Configurable, Child, Valued):
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        with self.routines.populating(self):
+        with self.routines.populating:
             self.value = value
 
     def restore(self):
-        with self.routines.restoring(self):
+        with self.routines.restoring:
             if self.defaulted:
                 assert len(self.routines.populating.history) == 0
                 logger.debug(

@@ -3,33 +3,13 @@ import logging
 
 from pickyoptions import settings
 from pickyoptions.core.base import BaseModel
+from pickyoptions.core.routine import Routine
+from pickyoptions.core.routine.constants import RoutineState
 
 from .exceptions import NotConfiguredError, ConfiguringError
-from .state import ConfigurationState
+
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
-
-
-# TODO: Merge this with the other routines in a common class.
-class ConfigurationRoutine(object):
-    def __init__(self, instance):
-        self._instance = instance
-
-    def __enter__(self):
-        logger.debug("Entering configuration routine context.")
-        self._instance.pre_configuration()
-        self._instance.assert_not_configuring()
-        if self._instance.configured:
-            logger.debug("Reconfiguring %s." % self.__class__.__name__)
-        self._instance._state = ConfigurationState.CONFIGURING
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        logger.debug("Exiting configuration routine context.")
-        self._instance._state = ConfigurationState.CONFIGURED
-        if exc_type:
-            return False
-        self._instance.post_configuration()
-        return False
 
 
 class SimpleConfigurable(BaseModel):
@@ -39,33 +19,56 @@ class SimpleConfigurable(BaseModel):
     abstract_methods = ('_configure', )
 
     def __init__(self, **kwargs):
-        self._state = ConfigurationState.NOT_CONFIGURED
+        self.configuration_routine = Routine(
+            self,
+            id='configuring',
+            pre_routine=self.pre_configuration,
+            post_routine=self.post_configuration
+        )
+
+        # TODO: Consider removing the ability to configure on init.
         configure_on_init = kwargs.pop('configure_on_init', False)
         if configure_on_init:
             self.configure(**kwargs)
 
+    def configure(self, *args, **kwargs):
+        with self.configuration_routine:
+            self._configure(*args, **kwargs)
+
     @property
-    def state(self):
-        return self._state
+    def configuration_state(self):
+        return self.configuration_routine.state
 
     @property
     def configured(self):
-        return self.state == ConfigurationState.CONFIGURED
+        if self.configuration_routine.finished:
+            assert self.configuration_state == RoutineState.FINISHED
+        return self.configuration_routine.finished
 
     @property
     def not_configured(self):
-        return self.state in (
-            ConfigurationState.CONFIGURING, ConfigurationState.NOT_CONFIGURED)
+        return self.configuration_state in (
+            RoutineState.IN_PROGRESS,
+            RoutineState.NOT_STARTED
+        )
 
     @property
     def configuring(self):
-        return self.state == ConfigurationState.CONFIGURING
+        if self.configuration_routine.in_progress:
+            assert self.configuration_state == RoutineState.IN_PROGRESS
+        return self.configuration_routine.in_progress
 
+    @Routine.require_not_in_progress
     def pre_configuration(self):
         logger.debug("Performing pre-configuration.")
+        if self.configured:
+            logger.debug("Reconfiguring %s." % self.__class__.__name__)
+        else:
+            logger.debug("Configuring %s." % self.__class__.__name__)
 
+    @Routine.require_finished
     def post_configuration(self):
-        logger.debug("Performing post-configuration.")
+        logger.debug("Done configuring %s." % self.__class__.__name__)
 
     def assert_configured(self):
         if not self.configured:
@@ -85,11 +88,6 @@ class SimpleConfigurable(BaseModel):
         kwargs.setdefault('cls', self.not_configured_error)
         return self.raise_with_self(*args, **kwargs)
 
-    def configure(self, *args, **kwargs):
-        routine = ConfigurationRoutine(self)
-        with routine:
-            self._configure(*args, **kwargs)
-
 
 class Configurable(SimpleConfigurable):
     abstract_properties = ('configurations', )
@@ -108,13 +106,6 @@ class Configurable(SimpleConfigurable):
         object.__setattr__(self, 'configurations', configurations)
 
         self.configure(**kwargs)
-        # This should already be happening with the post configuration.
-        # self.validate_configuration()
-
-    @property
-    def configuring(self):
-        assert self.configurations.configuring == super(Configurable, self).configuring  # noqa
-        return super(Configurable, self).configuring
 
     def _configure(self, *args, **kwargs):
         self.configurations.configure(*args, **kwargs)
