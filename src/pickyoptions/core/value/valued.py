@@ -21,6 +21,7 @@ class Valued(BaseModel):
         'configuration_error',
         'invalid_error',
         'invalid_type_error',
+        'validation_errors',
     )
 
     # TODO: Should we be implementing the user provided validate method in the
@@ -62,6 +63,7 @@ class Valued(BaseModel):
             configuration_error=self.configuration_error,
             invalid_error=self.invalid_error,
             invalid_type_error=self.invalid_type_error,
+            validation_errors=self.validation_errors,
             required=required,
             allow_null=allow_null,
             types=types,
@@ -128,5 +130,5 @@ class Valued(BaseModel):
     def set_default(self):
         self.value_instance.set_default()
 
-    def validate_value(self):
-        self.value_instance.validate()
+    # def validate_value(self):
+    #     self.value_instance.validate()

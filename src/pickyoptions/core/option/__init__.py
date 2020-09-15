@@ -1,11 +1,9 @@
 from copy import deepcopy
 import logging
-import inspect
 import six
 import sys
 
 from pickyoptions import settings, constants
-from pickyoptions.lib.utils import get_class_from_frame
 
 from pickyoptions.core.base import track_init
 from pickyoptions.core.configuration import Configuration, Configurations
@@ -138,7 +136,8 @@ class Option(Configurable, Child, Valued):
     does_not_exist_error = ConfigurationDoesNotExist
 
     # TODO: We should consider moving this inside the instance, because it might
-    # be causing code to be run unnecessarily on import.
+    # be causing code to be run unnecessarily on import.  We should at least
+    # make them lazy initialized.
     configurations = Configurations(
         Configuration('default', default=constants.NOTSET),
         Configuration('required', types=(bool, ), default=False),
@@ -260,41 +259,27 @@ class Option(Configurable, Child, Valued):
         configuration.assert_set()
         return configuration.value
 
+    @property
+    def validation_errors(self):
+        from pickyoptions.core.options.exceptions import OptionsInvalidError
+        return (OptionsInvalidError, OptionInvalidError)
+
     def post_set(self, value):
         # We do this here instead of at the end of the routines so these always
         # run when the value is updated.
         # I think this might be causing the value to be validated twice?
         # Isn't the validate configuration already getting called in the routine?
-        self.do_validate()
+
+        # TODO: IMPORTANT: The value instance calls the provided validation
+        # in it's value setter, so this might be doing it twice?
+        # self.do_validate()
         self.do_post_process()
 
-        # If the `obj:Option` is populating or overriding, the validation and post
-        # processing routines with options will be run after the routine finishes.
-        if self.routines.populating.in_progress:
-            assert not self.routines.subsection(
-                ['restoring', 'overriding']).any('in_progress')
-            assert self.parent.routines.populating.in_progress
-            self.routines.populating.store(value)
-        elif self.routines.overriding.in_progress:
-            assert not self.routines.subsection(
-                ['restoring', 'populating']).any('in_progress')
-            assert self.parent.routines.overriding.in_progress
-            self.routines.overriding.store(value)
-        elif self.routines.restoring.in_progress:
-            assert not self.routines.subsection(
-                ['overriding', 'populating']).any('in_progress')
-            assert self.parent.routines.restoring.in_progress
-            self.routines.restoring.store(value)
-        else:
-            # If the parent `obj:Options` are not populating, we want to perform
-            # the validation/post-processing routines with the populated
-            # `obj:Options`.  If the parent `obj:Options` are still populating,
-            # the routines will be called after the parent population finishes.
-            assert not self.routines.any_in_progress
-            logger.debug(
-                "Applying post-routine with options on option %s since it is "
-                "not in the middle of a routine." % self.identifier
-            )
+        # TODO: Do we have to worry about other routines here?
+        # If the `obj:Option` is populating, overriding or restoring,
+        # validation and post processing routines with options will be run after
+        # the routine finishes.
+        if not self.routines.any('in_progress'):
             self.post_routine_with_options()
 
     def reset(self):
@@ -304,14 +289,16 @@ class Option(Configurable, Child, Valued):
         # want to reset.  Do we have to worry about the defaulting routine?
         assert 'defaulting' not in [routine.id for routine in self.routines]
         if self.initialized:
-            self.routines.reset(ids=['populating', 'overriding', 'restoring'])
+            self.routines.subsection(
+                ['populating', 'overriding', 'restoring']).reset()
 
     def override(self, value):
         # Once the `obj:Option` is overridden, the default is no longer set - even
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        with self.routines.overriding:
+        with self.routines.overriding as routine:
+            routine.register(value)
             self.value = value
 
     def populate(self, value):
@@ -319,7 +306,8 @@ class Option(Configurable, Child, Valued):
         # if the default is what is used to populate the `obj:Option`.
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        with self.routines.populating:
+        with self.routines.populating as routine:
+            routine.register(value)
             self.value = value
 
     def restore(self):
@@ -417,7 +405,7 @@ class Option(Configurable, Child, Valued):
         if self.post_process_with_options is not None:
             self.post_process_with_options(self.value, self, self.parent)
 
-    def _do_user_provided_validation(self, func, name, *args):
+    def _do_user_provided_validation(self, value, func, name, *args):
         """
         Applies the user provided validation method to the `obj:Option`.
         """
@@ -429,7 +417,7 @@ class Option(Configurable, Child, Valued):
             # normalization.  This might be overkill if the value was defaulted,
             # since there is an earlier check that the validation passes for the
             # default value... nonetheless it is more complete this way.
-            result = func(self.value, self, *args)
+            result = func(value, self, *args)
         except Exception as e:
             # TODO: Maybe we should lax this requirement.  The caveat is that
             # other exceptions could be swallowed and a misleading configuration
@@ -467,7 +455,7 @@ class Option(Configurable, Child, Valued):
                     "If the value is valid, it must return None."
                 ))
 
-    def do_validate(self):
+    def do_validate(self, value=None, sender=None):
         """
         Performs validation of the `obj:Option` immediately after the
         `obj:Option` is either populated, overridden or restored.  This
@@ -483,22 +471,41 @@ class Option(Configurable, Child, Valued):
         instance) it does not wait for the `obj:Options` routine to finish, but
         instead is immediately called when the `obj:Option` finishes populating,
         overriding or restoring.
+
+        Parameters:
+        ----------
+        value: `obj:any` (optional)
+            The value to validate.  This is optionally provided because there
+            are cases where we want to perform the validation preemptively
+            on a default or normalized default value.
+
+            Default: `obj:Option` instance value
+
+        sender: `obj:type` (optional)
+            The class of the instance calling the method, if applicable.
+
+            If we call the method on the `obj:Option` externally, we want it to
+            also perform the validation on the `obj:Value` instance itself.  If
+            the method on the `obj:Option` is called internally by the
+            `obj:Value` instance, we don't want to perform the validation
+            inside the `obj:Value` instance.
+
+            Default: None
         """
-        # If we call the method on the `obj:Option` externally, we want it to
-        # also validate the value instance.  If the method is called internally
-        # from the value instance, we don't want to revalidate the value instance,
-        # since that will cause a recursion.
-        frame = inspect.stack()[1][0]
-        cls = get_class_from_frame(frame)
-        if cls != self.value_instance.__class__:
-            self.value_instance.validate()
+        value = value or self.value
+
+        # TODO: IMPORTANT: The value instance calls the provided validation
+        # in it's value setter, so this might be doing it twice?  It also
+        # gets called by the post_set method...
+        if not sender or isinstance(sender, self.__class__):
+            self.value_instance.validate(sender=self)
 
         # Perform user provided validation.
         # TODO: Maybe we should move this logic to the Value instance.
         if self.validate is not None:
-            self._do_user_provided_validation(self.validate, 'validate')
+            self._do_user_provided_validation(value, self.validate, 'validate')
 
-    def do_validate_with_options(self):
+    def do_validate_with_options(self, value=None):
         """
         Performs validation of the `obj:Option` with a reference to the parent
         `obj:Options` after the `obj:Option` has either been populated,
@@ -511,6 +518,15 @@ class Option(Configurable, Child, Valued):
         before applying this logic so that the `obj:Options` being used reflect
         the newest values after all the operations on the individual
         `obj:Option`(s) finished.
+
+        Parameters:
+        ----------
+        value: `obj:any` (optional)
+            The value to validate.  This is optionally provided because there
+            are cases where we want to perform the validation preemptively
+            on a default or normalized default value.
+
+            Default: `obj:Option` instance value
 
         TODO:
         ----
@@ -533,8 +549,10 @@ class Option(Configurable, Child, Valued):
           capability in, so the methods have more context about what routine they
           are being called in association with.
         """
+        value = value or self.value
         if self.validate_with_options is not None:
             self._do_user_provided_validation(
+                value,
                 self.validate_with_options,
                 'validate_with_options',
                 self.parent
@@ -573,6 +591,9 @@ class Option(Configurable, Child, Valued):
         # TODO: Should we be checking if default_configuration.set here?  This
         # will not be validating against default values for the default
         # configuration.
+        # TODO: We need to check the normalized default value as well!
+        # TODO: I don't think this matters whether or not it is configured, since
+        #
         if default_configuration.configured:
             if not types_configuration.conforms_to(default_configuration.value):
                 default_configuration.raise_invalid_type(
@@ -583,9 +604,11 @@ class Option(Configurable, Child, Valued):
                         "the default value must also be of the same types."
                     )
                 )
+
         # If the default value is not explicitly provided but the option is not
         # required, make sure that the default-default value conforms to the types
         # specified by `types` if they are provided.
+        # TODO: We need to check the normalized default value as well!
         elif required_configuration.value is False:
             if not types_configuration.conforms_to(default_configuration.value):
                 # TODO: We should figure out a more user-friendly way around this,

@@ -14,6 +14,21 @@ from .exceptions import (
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
+def with_routine(id):
+    def decorator(func):
+        @functools.wraps(func)
+        def inner(instance, *args, **kwargs):
+            from .routined import Routined
+
+            assert isinstance(instance, Routined)
+            routine = getattr(instance.routines, id)
+            with routine:
+                return func(instance, routine, *args, **kwargs)
+
+        return inner
+    return decorator
+
+
 @optional_parameter_decorator
 def require_not_in_progress(func, id=None):
     """
@@ -67,8 +82,10 @@ def require_finished(func, id=None):
 class Routine(BaseModel):
     require_not_in_progress = require_not_in_progress
     require_finished = require_finished
+    with_routine = with_routine
 
-    def __init__(self, instance, id, pre_routine=None, post_routine=None):
+    def __init__(self, instance, id, pre_routine=None, post_routine=None,
+            on_queue_removal=None):
         super(Routine, self).__init__()
         self._instance = instance
         self._id = id
@@ -77,21 +94,26 @@ class Routine(BaseModel):
         self._queue = []
         self._pre_routine = pre_routine
         self._post_routine = post_routine
+        self._on_queue_removal = on_queue_removal
 
     def __enter__(self):
-        logger.debug("Entering routine %s context." % self.id)
         assert len(self._queue) == 0
         self.pre_routine(self._instance)
         self._state = RoutineState.IN_PROGRESS
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        logger.debug("Exiting routine %s context." % self.id)
         self._state = RoutineState.FINISHED
         if exc_type:
             return False
         self.post_routine(self._instance)
         return False
+
+    def register(self, value, queue=True, history=True):
+        if queue:
+            self.add_to_queue(value)
+        if history:
+            self.store(value)
 
     @property
     def id(self):
@@ -142,9 +164,6 @@ class Routine(BaseModel):
         Calls the provied post_routine method if it is provided and clears
         the progress queue of the `obj:Routine`.
         """
-        logger.debug('Performing post-routine %s on %s.' % (
-            self.__class__.__name__, instance.__class__.__name__))
-
         if self._post_routine:
             self._post_routine()
 
@@ -163,9 +182,6 @@ class Routine(BaseModel):
         before the first time it is run, so we cannot enforce that the
         pre_routine require the state be NOT_STARTED.
         """
-        logger.debug('Performing pre-routine %s on %s.' % (
-            self.__class__.__name__, instance.__class__.__name__))
-
         # The queue should have already been cleared by the post_routine.
         assert len(self.queue) == 0
 
@@ -216,15 +232,24 @@ class Routine(BaseModel):
         """
         Adds an operated element the `obj:Routine`'s progress queue.
         """
+        assert obj not in self._queue
         self._queue.append(obj)
+
+    def save(self):
+        self._history.append(self._queue)
 
     @require_finished
     def clear_queue(self):
         """
         Clears the `obj:Routine`'s progress queue.
         """
-        logger.debug(
-            "Clearing %s items from the routine queue." % len(self._queue))
+        logger.debug("Clearing %s items from the %s queue." % (
+            len(self._queue),
+            self.id,
+        ))
+        if self._on_queue_removal:
+            for obj in self.queue:
+                self._on_queue_removal(obj)
         self._queue = []
 
     @require_not_in_progress

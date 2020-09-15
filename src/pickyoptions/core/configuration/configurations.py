@@ -25,8 +25,7 @@ class Configurations(Parent, SimpleConfigurable):
     does_not_exist_error = ConfigurationDoesNotExist
 
     @track_init
-    def __init__(self, *configurations, **kwargs):
-        self._validate = kwargs.pop('validate', None)
+    def __init__(self, *configurations):
         SimpleConfigurable.__init__(self)
         Parent.__init__(self, children=list(configurations))
 
@@ -102,6 +101,9 @@ class Configurations(Parent, SimpleConfigurable):
             # Validate the overall configuration after the configuration is set.
             self.validate()
 
+    def subsection(self, fields):
+        return self.__class__(*tuple([getattr(self, field) for field in self]))
+
     def validate_configuration(self):
         if self._validate_configuration is not None:
             self._validate_configuration()
@@ -142,12 +144,19 @@ class Configurations(Parent, SimpleConfigurable):
 
     @property
     def explicitly_set_configurations(self):
+        data = {}
+        for field, configuration in self:
+            if configuration.configured:
+                data[field] = configuration
+        return data
+
+    @property
+    def explicitly_set_configuration_values(self):
         """
         Returns the key-value pairs of explicitly set configuration values
         that were provided on configuration of the `obj:Configurations`.
         """
         data = {}
-        for field, configuration in self:
-            if configuration.configured:
-                data[field] = configuration.value
+        for k, v in self.explicitly_set_configurations.items():
+            data[k] = v.value
         return data

@@ -1,4 +1,5 @@
-from pickyoptions.core.exceptions import PickyOptionsError, ValueTypeError
+from pickyoptions.core.exceptions import PickyOptionsError
+from pickyoptions.core.value.exceptions import ValueTypeError
 from pickyoptions.core.option.exceptions import OptionTypeError
 
 
@@ -79,3 +80,25 @@ def test_default_injection():
 
     exc = TestError(name='new-name')
     assert str(exc) == "\nThe new-name is invalid."
+
+
+def test_nested_children():
+    e1 = PickyOptionsError("This is a test error 1.")
+    e2 = PickyOptionsError("This is a test error 2.")
+
+    e3 = PickyOptionsError(
+        message="This is a test parent error.",
+        children=[e1, e2, AttributeError("This is a built in error.")]
+    )
+    e4 = PickyOptionsError(
+        message="This is a test grand parent error.",
+        children=[e3, AttributeError("This is a built in error.")]
+    )
+    assert str(e4) == (
+        "\nThis is a test grand parent error."
+        "\n    --> (1) This is a test parent error."
+        "\n        --> (1) This is a test error 1."
+        "\n        --> (2) This is a test error 2."
+        "\n        --> (3) This is a built in error."
+        "\n    --> (2) This is a built in error."
+    )

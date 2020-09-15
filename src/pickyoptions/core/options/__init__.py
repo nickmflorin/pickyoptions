@@ -184,7 +184,7 @@ class Options(Configurable, Parent, Routined):
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(
-            cls, **self.configurations.explicitly_set_configurations)
+            cls, **self.configurations.explicitly_set_configuration_values)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             object.__setattr__(result, k, deepcopy(v, memo))
@@ -291,13 +291,13 @@ class Options(Configurable, Parent, Routined):
         kwargs.setdefault('cls', OptionsInvalidError)
         return self.raise_with_self(*args, **kwargs)
 
+    # @Routine.with_routine(id="populating")
     def populate(self, *args, **kwargs):
         """
         Populates the configured `obj:Options` instance with values for each
         defined `obj:Option`.
         """
         self.reset()
-
         data = dict(*args, **kwargs)
 
         # Make sure that no invalid options provided.
@@ -306,26 +306,19 @@ class Options(Configurable, Parent, Routined):
 
         with self.routines.populating as routine:
             for option in self.options:
-                # Add the `obj:Option` to the queue of `obj:Option`(s) that were
-                # populated in a given routine so we can track which options need
-                # to be post validated and # post processed with the most up to
-                # date `obj:Options` when the routine finishes. This needs to
-                # happen regardless of whether or not the option is in the data.
-                assert option not in routine.queue
                 option.assert_configured()
-                routine.add_to_queue(option)
-
                 if option.field in data:
                     option.populate(data[option.field])
                     # Keep track of the options that were explicitly populated so
                     # they can be used to reset the `obj:Options` to it's
                     # previously populated state at a later point in time.
-                    routine.store(option)
+                    routine.register(option)
                 else:
-                    # This will set the default on the `obj:Option` if it is not
-                    # required.  It will also validate that the option is not
-                    # required before proceeding any further.
                     option.set_default()
+                    # If the option wasn't explicitly populated we don't store it
+                    # in the routine history because we only need the explicitly
+                    # populated options to revert state.
+                    routine.register(option, history=False)
 
     def post_populate(self):
         assert self.state == OptionsState.NOT_POPULATED
@@ -350,13 +343,11 @@ class Options(Configurable, Parent, Routined):
                 # populated in a given routine, so we can track which options
                 # need to be post validated and post processed with the most up
                 # to date `obj:Options` when the routine finishes.
-                assert option not in routine.queue
-                routine.add_to_queue(option)
-
+                routine.register(option, history=False)
             # Keep track of the options that were overridden AT EACH overriding
             # routine, so the state of the `obj:Options` can be reverted back to
             # a previous override or not overrides at all.
-            routine.store(routine.queue)
+            routine.save()
 
     def post_override(self):
         assert self.state in (
@@ -364,6 +355,8 @@ class Options(Configurable, Parent, Routined):
             OptionsState.POPULATED_OVERRIDDEN
         )
         self._state = OptionsState.POPULATED_OVERRIDDEN
+        self.do_validate()
+        self.do_post_process()
 
     def clear_override(self):
         raise NotImplementedError()
@@ -438,7 +431,8 @@ class Options(Configurable, Parent, Routined):
         # want to reset.  Do we have to worry about the defaulting routine?
         assert 'defaulting' not in [routine.id for routine in self.routines]
         if self.initialized:
-            self.routines.reset(ids=['populating', 'overriding', 'restoring'])
+            self.routines.subsection(
+                ['populating', 'overriding', 'restoring']).reset()
         for option in self.options:
             option.reset()
 

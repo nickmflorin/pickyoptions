@@ -15,7 +15,7 @@ class SimpleConfigurable(Routined):
     not_configured_error = NotConfiguredError
     configuring_error = ConfiguringError
 
-    abstract_methods = ('_configure', )
+    abstract_methods = ('_configure', 'validate_configuration')
 
     def __init__(self):
         Routined.__init__(self)
@@ -26,11 +26,7 @@ class SimpleConfigurable(Routined):
         )
 
     def configure(self, *args, **kwargs):
-        if self.__class__.__name__ == "Options":
-            assert all([x.configured for x in list(self.children)])  # Temporary
         with self.routines.configuration:
-            if self.__class__.__name__ == "Options":
-                assert all([x.configured for x in list(self.children)])  # Temporary
             self._configure(*args, **kwargs)
 
     @property
@@ -60,15 +56,16 @@ class SimpleConfigurable(Routined):
 
     @Routine.require_not_in_progress(id="configuration")
     def pre_configuration(self):
-        logger.debug("Performing pre-configuration.")
         if self.configured:
-            logger.debug("Reconfiguring %s." % self.__class__.__name__)
+            logger.debug("Reconfiguring %s." % self)
         else:
-            logger.debug("Configuring %s." % self.__class__.__name__)
+            logger.debug("Configuring %s." % self)
 
     @Routine.require_finished(id="configuration")
     def post_configuration(self):
-        logger.debug("Done configuring %s." % self.__class__.__name__)
+        assert self.configured is True
+        logger.debug("Done configuring %s." % self)
+        self.validate_configuration()
 
     def assert_configured(self):
         if not self.configured:
@@ -91,9 +88,6 @@ class SimpleConfigurable(Routined):
 
 class Configurable(SimpleConfigurable):
     abstract_properties = ('configurations', )
-    # We don't need the _configure method for the Configurable class, only the
-    # SimpleConfigurable class.
-    abstract_methods = ('validate_configuration', )
 
     def __init__(self, **kwargs):
         super(Configurable, self).__init__()

@@ -29,7 +29,10 @@ class Routines(list):
         super(Routines, self).append(routine)
 
     def subsection(self, ids):
-        subroutines = [deepcopy(getattr(self, id)) for id in ids]
+        # Note: The individual routines are not __deepcopy__'d, so they may
+        # be mutated in the subsections and the mutations will apply to the
+        # original `obj:Routine` in the `obj:Routines`.
+        subroutines = [getattr(self, id) for id in ids]
         return self.__class__(*tuple(subroutines))
 
     def get_routine(self, id):
@@ -42,10 +45,8 @@ class Routines(list):
         for routine in self:
             routine.clear_queue()
 
-    def reset(self, ids=None):
-        ids = ids or [rt.id for rt in self]
-        for id in ids:
-            routine = self.get_routine(id)
+    def reset(self):
+        for routine in self:
             routine.reset()
 
     def all(self, attribute):

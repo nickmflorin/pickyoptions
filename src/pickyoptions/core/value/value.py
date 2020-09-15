@@ -1,8 +1,7 @@
 import logging
-import inspect
 
 from pickyoptions import constants, settings
-from pickyoptions.lib.utils import ensure_iterable, get_class_from_frame
+from pickyoptions.lib.utils import ensure_iterable
 
 from pickyoptions.core.configuration.configurable import SimpleConfigurable
 from pickyoptions.core.configuration.exceptions import ConfigurationError
@@ -39,6 +38,7 @@ class Value(Child, SimpleConfigurable):
         invalid_type_error=ValueTypeError,
         invalid_error=ValueInvalidError,
         locked_error=ValueLockedError,
+        validation_errors=None,
         **kwargs
     ):
         self._value = constants.NOTSET
@@ -46,6 +46,10 @@ class Value(Child, SimpleConfigurable):
         self._set = False
         self._field = field
         self.configuration_error = configuration_error
+
+        # TODO: Figure out how to do this more cleanly.
+        self.validation_errors = validation_errors
+        assert self.validation_errors is not None
 
         Child.__init__(
             self,
@@ -67,6 +71,9 @@ class Value(Child, SimpleConfigurable):
         )
         self.configure(**kwargs)
 
+    # NOTE: When passing in values from the `obj:Option`, the configuration values
+    # are used, which are in themselves configuration values, so the default will
+    # never be NOTSET, it will be None.  This is confusing...
     def _configure(self, default=constants.NOTSET, required=False,
             allow_null=True, locked=False, types=None, normalize=None,
             post_set=None, validate=None):
@@ -142,6 +149,7 @@ class Value(Child, SimpleConfigurable):
 
     @property
     def types(self):
+        self.assert_configured()
         iterable = ensure_iterable(self._types)
         if len(iterable) != 0:
             return iterable
@@ -158,10 +166,12 @@ class Value(Child, SimpleConfigurable):
 
     @property
     def locked(self):
+        self.assert_configured()
         return self._locked
 
     @property
     def required(self):
+        self.assert_configured()
         return self._required
 
     @property
@@ -182,6 +192,7 @@ class Value(Child, SimpleConfigurable):
         Returns whether or not the instance has been explicitly initialized
         with a default value.
         """
+        self.assert_configured()
         return self._default != constants.NOTSET
 
     def pre_default(self):
@@ -192,11 +203,19 @@ class Value(Child, SimpleConfigurable):
         # TODO: Do we need to worry about resetting this value to False in the
         # case that a non-default argument is provided?
         self._defaulted = True
+        # We have to run the validation after the default, because it cannot
+        # run inside of the `.value` setter when defaulting...
+        self.validate(sender=self)
 
     @property
     def defaulted(self):
         """
         Returns whether or not the instance has been defaulted.
+
+        TODO:
+        ----
+        Right now this only refers to the situation in which the default was
+        provided?
         """
         # TODO: Cleanup this logic.
         # TODO: Should we maybe disallow access of this property if the defaultign
@@ -229,13 +248,18 @@ class Value(Child, SimpleConfigurable):
         # TODO: Do we return the default here if the value is not provided?
         self.assert_set()
         assert self._value != constants.NOTSET
+        assert not self.routines.defaulting.in_progress
 
         if self._value is None:
-            try:
-                assert not self.required
-                assert self.default_provided
-            except AssertionError:
-                import ipdb; ipdb.set_trace()
+            # If the value is None, the value must not be required.  The value
+            # does not necessarily have to have been defaulted, since that only
+            # applies when the default is provided.
+            assert not self.required
+            if self.default_provided:
+                assert self.defaulted is not None
+                assert self.defaulted
+                assert self._default != constants.NOTSET
+
             return self.normalize(self.default)
 
         # This really only counts in the `obj:Option` case.
@@ -285,7 +309,7 @@ class Value(Child, SimpleConfigurable):
                     # We now have to clear the defaulted state!
                     self.routines.defaulting.reset()
                     self._value = value
-                if value != self._value:
+                if value == self._value:
                     logger.debug(
                         "Not changing value since it is already set with "
                         "the same value."
@@ -293,16 +317,31 @@ class Value(Child, SimpleConfigurable):
                 else:
                     self._value = value
             else:
-                if self.default == value:
-                    logger.debug(
-                        "The default is None, but we are also setting to "
-                        "None explicitly... We have to be careful here."
-                    )
-                    raise Exception()  # Temporary - for sanity.
+                if not self.defaulting:
+                    if self.default == value:
+                        logger.debug(
+                            "The provided value %s is not required to "
+                            "be explicitly defined because it is the "
+                            "default." % value
+                        )
+                    elif value is None:
+                        assert self.default is not None
+                        # TODO: What to do if we are setting the value to None
+                        # when it has a default?
+                        # This assertion should be done more generally if the
+                        # value is None.
+                        # assert self.allow_null
                 self._value = value
 
         self._set = True
-        self.validate()
+        # The validate method accesses the already set value, so we must wait
+        # until after it is done defaulting (if it is defaulting) to validate.
+        # TODO: We should implement a routine for setting the value as well,
+        # that way the validation can be performed after the value is set.
+        if not self.defaulting:
+            self.validate(sender=self)
+
+        # TODO: Should this also be done after the defaulting routine finishes?
         self.post_set(value)
 
     def set_default(self):
@@ -312,6 +351,9 @@ class Value(Child, SimpleConfigurable):
             "Cannot set the default when it has already been set."
         ))
         with self.routines.defaulting:
+            # TODO: Should we consider leaving the value in the NOTSET state if
+            # the value is defaulted?  This will make it so that `.set` is False,
+            # but it might make the logic in the `.value` getter less confusing.
             self.value = None
 
     def reset(self):
@@ -324,12 +366,15 @@ class Value(Child, SimpleConfigurable):
         if self._post_set is not None:
             self._post_set(value)
 
+    # TODO: Implement this in a similar fashion to the validation, so we don't
+    # have to reference the parent here... This is the only place where the
+    # parent value is used.
     def normalize(self, value):
         if self._normalize is not None:
             return self._normalize(value, self.parent)
         return value
 
-    def validate(self):
+    def validate(self, sender=None):
         """
         Validates the `obj:Configuration` after the value is supplied.
 
@@ -366,12 +411,14 @@ class Value(Child, SimpleConfigurable):
         # If the validate method is being called from the parent class, we don't
         # want to call the parent provided validation method since it will
         # will introduce an infinite recursion.
-        frame = inspect.stack()[1][0]
-        cls = get_class_from_frame(frame)
-        if cls != self.parent.__class__:
+        if not sender or isinstance(sender, self.__class__):
             if self._validate is not None:
-                self._validate()
+                # Including the value explicitly here is not necessary, but we
+                # will leave for clarity (for the time being).
+                self._validate(value=self.value, sender=self)
 
+    # TODO: Referencing the error by string here is kind of gross, see if we
+    # can cleanup.
     @accumulate_errors(error_cls='configuration_error')
     def validate_configuration(self):
         """
@@ -380,55 +427,21 @@ class Value(Child, SimpleConfigurable):
         This validation is independent of any value that would be set on the
         `obj:Configuration`, so it runs after initialiation.
 
-        This validation is primarily for internal purposes and is meant to
-        ensure that the `obj:Configuration`(s) are defined properly in the
-        `obj:Option` and `obj:Options`.
-
-        TODO:
-        ----
-        (1) Should we maybe add a property that validates the type of value
-            provided if it is not `None`?  This would allow us to have a
-            non-required value type checked if it is provided.  This would be a
-            useful configuration for the `obj:Option` and `obj:Options`.
-        (2) Not only do we need to validate against the default value, we need
-            to validate against the normalized default value!
-        (3) We need to do the validation with options against the default value
-            and the default normalized value.
+        Note:
+        -----
+        In the case of the `obj:Option`, the individual values passed to
+        this `obj:Value` instance come from the `configurations` of the
+        `obj:Option`, which validates the individual values.  In the case of
+        the `obj:Configuration`, the values are not configuration values but
+        raw values - but they need not be validated here, since they are not
+        user provided values.  All we want to do here is do the validation
+        that is associated with dependencies between values.
         """
-        # What about reconfiguration?
-        assert self.configured is False
+        self.assert_configured()  # Redundant, but helpful for sanity.
 
-        if not isinstance(self._required, bool):
-            yield self.raise_invalid(
-                message=(
-                    "The `required` parameter for configuration `{field}` "
-                    "must be a boolean."
-                ),
-                return_exception=True
-            )
-
-        # NOTE: This is causing recusion issues... around validate_configuration,
-        # we need to figure out a way to fix this so the configurations can
-        # be used recursively.
-        # Validate that the optionally provided `validate` method is of the
-        # correct signature.
-        # configuration = CallableConfiguration(
-        #     'validate',
-        #     num_arguments=2,
-        #     error_message=(
-        #         "Must be a callable that takes the value of the configuration "
-        #         "as it's first and only argument"
-        #     )
-        # )
-        # configuration.value = self._validate  # Causes validation to occur
-        #
-        # configuration = EnforceTypesConfiguration('types')
-        # configuration.value = self._types  # Causes validation to occur
-
-        # Validate that the default is either set or not set properly based on
-        # the requirement parameter.
-        # TOOD: Use the base Configuration class here and specify types.
-        if self._required is True:
+        # Validate that the default is not provided in the case that the value
+        # is required.
+        if self.required is True:
             # This accounts for cases when the default value is not None or is
             # explicitly set as None.
             if self.default_provided:
@@ -436,45 +449,74 @@ class Value(Child, SimpleConfigurable):
                     return_exception=True,
                     message=(
                         "Cannot provide a default value for configuration "
-                        "`{field}` because the configuration is required."
+                        "`{name}` because the configuration is required."
                     )
                 )
+        # If the value is not required, issue a warning if the default is not
+        # explicitly provided.
         else:
             if not self.default_provided:
-                # We don't want to raise invalid here, just indicate that the
-                # default value of `None` will be used.
                 logger.warning(
                     "The configuration for `%s` is not required and no default "
                     "value is specified. The default value will be `None`."
                     % self.field
                 )
+            # If the value is not required (the default is applicable) we need
+            # to make sure that the default and the normalized default pass the
+            # user provided validation.
+            if self._validate is not None:
+                try:
+                    self._validate(value=self.default, sender=self)
+                except self.user_validation_errors as e:
+                    # TODO: Add more user detail to the error message.
+                    yield self.raise_invalid(
+                        return_exception=True,
+                        message=(
+                            "The provided validation deems the default value "
+                            "`{value}` invalid. The validation method must work "
+                            "for both the default and the populated values."
+                        ),
+                        value=self.default,
+                        children=[e],
+                    )
+                if self._normalize:
+                    normalized_default_value = self.normalize(self.default)
+                    try:
+                        self._validate(
+                            value=normalized_default_value,
+                            sender=self
+                        )
+                    except self.user_validation_errors as e:
+                        # TODO: Add more user detail to the error message.
+                        yield self.raise_invalid(
+                            return_exception=True,
+                            message=(
+                                "The provided validation deems the normalized "
+                                "default value `{value}` invalid. The validation "
+                                "method must work for the default value, the "
+                                "normalized default value and the populated "
+                                "values."
+                            ),
+                            value=self.default,
+                            children=[e],
+                        )
 
-        # Validate that if the configuration has a default value, that the default
-        # value also  passes the validation - this also applies when the default
-        # value is None.
-        if self._validate is not None:
-            # TODO: FIX THE DEFAULT REFERENCE HERE - We have to worry about both
-            # the user set default and the default default (if the user set
-            # default is not provided).
-            try:
-                self._validate(self._default)
-            # Allow other exceptions to propogate because those are either valid
-            # errors or represent inproper usage of the `validate` parameter.
-            except self.configuration_error:
-                yield self.raise_invalid(
-                    return_exception=True,
-                    message="The configuration default value {value} is invalid.",
-                    value=self.default
-                )
-
-        # If the types are specified and the default value is not specified, the
-        # value of `None` will not be of the required types.
-        # TODO: Allow a setting that validates the value only if it is not None.
-        if self._types is not None:
-            default = self._default if self.default_provided else None
-            if default is None or not isinstance(default, self._types):
-                yield self.raise_invalid(
-                    return_exception=True,
-                    message="The default value is not of type %s." % self.types,
-                    value=self.default
-                )
+            # If the types are specified and the default value is not specified,
+            # the default value must also be of those types - even if it is None.
+            # TODO: Allow a setting that validates the value only if it is not
+            # None.
+            if self.types is not None:
+                if (
+                    self.default is None
+                    or not isinstance(self.default, self.types)
+                ):
+                    # TODO: Add more user detail to the error message.
+                    yield self.raise_invalid(
+                        return_exception=True,
+                        value=self.default,
+                        types=self.types,
+                        message=(
+                            "The default value `{value}` is not of the "
+                            "provided types, `{types}`."
+                        )
+                    )

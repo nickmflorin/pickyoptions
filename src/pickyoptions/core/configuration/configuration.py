@@ -104,6 +104,7 @@ class Configuration(Child, SimpleConfigurable, Valued):
     required_error = ConfigurationRequiredError  # Also used by Child impl.
     invalid_error = ConfigurationInvalidError  # Also used by Child impl.
     invalid_type_error = ConfigurationTypeError  # Also used by Child impl.
+    validation_errors = ConfigurationError
 
     # Child Implementation Properties
     parent_cls = 'Configurations'
@@ -124,6 +125,8 @@ class Configuration(Child, SimpleConfigurable, Valued):
         # Note that the validate method is being passed in here?  This is
         # different from the option case, where it is not passed in?
         # NOTE: We need to pass in the post_set here...
+        # NOTE: This will fail because the validation method might not have a
+        # sender attribute...
         Valued.__init__(self, field, **kwargs)
 
     def _configure(self, value):
@@ -161,4 +164,7 @@ class Configuration(Child, SimpleConfigurable, Valued):
         )
 
     def post_set(self, value):
+        pass
+
+    def validate_configuration(self):
         pass

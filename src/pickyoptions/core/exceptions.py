@@ -1,4 +1,4 @@
-from pickyoptions.lib.utils import ensure_iterable, is_null
+from pickyoptions.lib.utils import is_null
 
 
 def make_bold(value):
@@ -17,7 +17,16 @@ class PickyOptionsError(Exception):
     def __init__(self, *args, **kwargs):
         super(PickyOptionsError, self).__init__()
 
+        # This is tough to do recursively because of the stipulation that other
+        # built in errors should be able to be nested.
         self._children = kwargs.pop('children', [])
+        self._indent_level = 0
+        for child in self.children:
+            child._indent_level = self._indent_level + 1
+            if isinstance(child, PickyOptionsError):
+                for grandchild in child.children:
+                    grandchild._indent_level = child._indent_level + 1
+
         self._numbered_children = kwargs.pop('numbered_children', True)
         self._indent_children = kwargs.pop('indent_children', "--> ")
         self._child_format = kwargs.pop('child_format', None)
@@ -49,6 +58,15 @@ class PickyOptionsError(Exception):
             args[0] if len(args) != 0
             else kwargs.pop('message', getattr(self, 'default_message'))
         )
+
+    @property
+    def children(self):
+        return self._children
+
+    def indent_children(self):
+        for child in self._children:
+            child._indent_level = self._indent_level + 1
+            # child.indent_children()
 
     def _has_injection_placeholder(self, argument):
         return "{%s}" % argument in self.message
@@ -120,12 +138,19 @@ class PickyOptionsError(Exception):
         if self._numbered_children:
             formatted_child = "(%s) %s" % (index + 1, formatted_child)
         if self._indent_children:
+            indentation = "    " * (child._indent_level)
             if not self._indent_children.endswith(' '):
-                formatted_child = "%s %s" % (
-                    self._indent_children, formatted_child)
+                formatted_child = "%s%s %s" % (
+                    indentation,
+                    self._indent_children,
+                    formatted_child
+                )
             else:
-                formatted_child = "%s%s" % (
-                    self._indent_children, formatted_child)
+                formatted_child = "%s%s%s" % (
+                    indentation,
+                    self._indent_children,
+                    formatted_child
+                )
         return formatted_child
 
     @property
