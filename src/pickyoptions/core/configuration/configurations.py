@@ -2,12 +2,10 @@ import logging
 
 from pickyoptions import settings
 
-from pickyoptions.core.base import track_init
-from pickyoptions.core.family import Parent
-
-from .configurable import SimpleConfigurable
+from .configurable import Configurable
 from .configuration import Configuration
 from .exceptions import ConfigurationDoesNotExist
+from .parent import Parent
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -16,7 +14,8 @@ logger = logging.getLogger(settings.PACKAGE_NAME)
 # TODO: Implement child properties like _set, _default and _value.
 # TODO: This acts a little funky as a Child, since the Child class wants to
 # be able to access an identifier...
-class Configurations(Parent, SimpleConfigurable):
+class Configurations(Parent, Configurable):
+    __abstract__ = False
 
     # Child Implementation Properties
     parent_cls = ('Options', 'Option')
@@ -24,10 +23,13 @@ class Configurations(Parent, SimpleConfigurable):
     child_cls = Configuration
     does_not_exist_error = ConfigurationDoesNotExist
 
-    @track_init
-    def __init__(self, *configurations):
-        SimpleConfigurable.__init__(self)
+    def __init__(self, *configurations, **kwargs):
+        Configurable.__init__(self)
         Parent.__init__(self, children=list(configurations))
+
+        # We will make the validation error required for the time being.
+        for configuration in self.children:
+            configuration._validation_error = kwargs['validation_error']
 
     def __repr__(self):
         # TODO: Keep track of state as an attribute.
@@ -93,6 +95,7 @@ class Configurations(Parent, SimpleConfigurable):
             configuration = self[k]
 
             # Make sure that the configuration can be reconfigured.
+            # TODO: Use configuration.locked.
             if not configuration.updatable:
                 configuration.raise_cannot_reconfigure()
 

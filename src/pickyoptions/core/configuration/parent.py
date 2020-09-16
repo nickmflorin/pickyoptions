@@ -4,9 +4,8 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from pickyoptions.core.base import BaseModel
-from pickyoptions.core.exceptions import DoesNotExistError
-from pickyoptions.core.value.exceptions import ValueTypeError
+from pickyoptions.core.base import Base
+from pickyoptions.core.exceptions import DoesNotExistError, ValueTypeError
 
 from .child import Child
 from .exceptions import ParentHasChildError
@@ -15,24 +14,21 @@ from .exceptions import ParentHasChildError
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Parent(BaseModel):
-    """
-    Mapping model.
-    """
+class Parent(Base):
+    __abstract__ = True
+
     does_not_exist_error = DoesNotExistError
     abstract_properties = ('child_cls', )
 
     def __init__(self, children=None, child_value=None):
+        super(Parent, self).__init__()
+
         self._children = []
         self._child_value = child_value
 
         children = children or []
         for child in children:
             self.assign_child(child)
-
-        # Temporary
-        if children[0].__class__.__name__ == "Option":
-            assert all([x.configured for x in self.children])  # Temporary
 
     def __getattr__(self, k):
         child = self.get_child(k)
@@ -48,17 +44,17 @@ class Parent(BaseModel):
     def has_child(self, child):
         # TODO: Should we maybe check if the entire object is in the children,
         # instead of just checking against an identifier value?
-        identifier = child
+        field = child
         if not isinstance(child, six.string_types):
             self.validate_child(child)
-            identifier = getattr(child, self.child_identifier)
-        return identifier in self.identifiers
+            field = child.field
+        return field in self.fields
 
     def raise_if_child_missing(self, child):
         if not self.has_child(child):
             self.raise_no_child(name=(
                 child if isinstance(child, six.string_types)
-                else getattr(child, self.child_identifier)
+                else child.field
             ))
 
     # TODO: Maybe we want to prevent this, or only allow it in certain
@@ -87,18 +83,18 @@ class Parent(BaseModel):
         return self._child_value(child)
 
     @property
-    def identifiers(self):
-        return [getattr(child, self.child_identifier) for child in self.children]
+    def fields(self):
+        return [child.field for child in self.children]
 
     def keys(self):
-        return self.identifiers
+        return self.fields
 
     def values(self):
         return [self.child_value(child) for child in self.children]
 
     def __iter__(self):
         for child in self.children:
-            yield child.identifier, self.child_value(child)
+            yield child.field, self.child_value(child)
 
     def __len__(self):
         return len(self.children)
@@ -108,27 +104,17 @@ class Parent(BaseModel):
         return [(field, value) for field, value in self]
 
     def raise_child_does_not_exist(self, *args, **kwargs):
-        kwargs.setdefault('cls', self.does_not_exist_error)
-        # This is necessary because of multiple inheritance patterns when
-        # inheriting from Child and Parent.  We should come up with a better
-        # system.  This happens in Configurations, where it inherits from both
-        # Parent and Child.
-        BaseModel.raise_with_self(self, *args, **kwargs)
+        kwargs['cls'] = self.does_not_exist_error
+        super(Parent, self).raise_with_self(self, *args, **kwargs)
 
-    def get_child(self, identifier):
+    def get_child(self, field):
         try:
             return [
                 child for child in self.children
-                if child.identifier == identifier
+                if child.field == field
             ][0]
         except IndexError:
-            # if settings.DEBUG:
-            #     # TODO: Set the original traceback if we can.
-            #     raise AttributeError(
-            #         "The attribute `%s` does not exist on the %s instance."
-            #         % (identifier, self.__class__.__name__)
-            #     )
-            self.raise_child_does_not_exist(name=identifier)
+            self.raise_child_does_not_exist(name=field)
 
     def new_children(self, children):
         self.remove_children()

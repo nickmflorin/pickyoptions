@@ -1,1 +1,2 @@
 NOTSET = "NOTSET"
+EMPTY = "EMPTY"

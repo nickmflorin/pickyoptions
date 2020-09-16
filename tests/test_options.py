@@ -1,7 +1,6 @@
 import pytest
 
-from pickyoptions.core.option import Option
-from pickyoptions.core.options import Options
+from pickyoptions import Option, Options
 from pickyoptions.core.options.exceptions import OptionsInvalidError
 
 

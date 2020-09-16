@@ -1,8 +1,7 @@
 from copy import deepcopy
 import pytest
 
-from pickyoptions.core.option import Option
-from pickyoptions.core.options import Options
+from pickyoptions import Option, Options
 from pickyoptions.core.configuration.exceptions import ConfigurationTypeError
 from pickyoptions.core.option.exceptions import OptionNotSetError
 

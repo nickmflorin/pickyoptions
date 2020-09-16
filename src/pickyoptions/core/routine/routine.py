@@ -4,7 +4,7 @@ import logging
 from pickyoptions import settings
 from pickyoptions.lib.utils import optional_parameter_decorator
 
-from pickyoptions.core.base import BaseModel
+from pickyoptions.core.base import Base
 
 from .constants import RoutineState
 from .exceptions import (
@@ -12,21 +12,6 @@ from .exceptions import (
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
-
-
-def with_routine(id):
-    def decorator(func):
-        @functools.wraps(func)
-        def inner(instance, *args, **kwargs):
-            from .routined import Routined
-
-            assert isinstance(instance, Routined)
-            routine = getattr(instance.routines, id)
-            with routine:
-                return func(instance, routine, *args, **kwargs)
-
-        return inner
-    return decorator
 
 
 @optional_parameter_decorator
@@ -79,10 +64,8 @@ def require_finished(func, id=None):
     return inner
 
 
-class Routine(BaseModel):
-    require_not_in_progress = require_not_in_progress
-    require_finished = require_finished
-    with_routine = with_routine
+class Routine(Base):
+    ___abstract__ = False
 
     def __init__(self, instance, id, pre_routine=None, post_routine=None,
             on_queue_removal=None):

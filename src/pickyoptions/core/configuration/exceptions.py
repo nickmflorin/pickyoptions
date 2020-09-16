@@ -1,11 +1,16 @@
-from pickyoptions.core.exceptions import PickyOptionsError, DoesNotExistError
-from pickyoptions.core.value.exceptions import (
+from pickyoptions.core.exceptions import (
+    PickyOptionsError,
+    DoesNotExistError,
     ValueNotSetError,
     ValueLockedError,
     ValueTypeError,
     ValueInvalidError,
     ValueRequiredError
 )
+
+
+class ParentHasChildError(PickyOptionsError):
+    default_message = "The parent already has the child in it's children."
 
 
 class ConfigurationError(PickyOptionsError):

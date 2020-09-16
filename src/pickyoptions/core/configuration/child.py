@@ -4,48 +4,126 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from pickyoptions.core.base import BaseModel
-from pickyoptions.core.exceptions import PickyOptionsError
-from pickyoptions.core.value.exceptions import (
+from pickyoptions.core.base import Base
+from pickyoptions.core.exceptions import (
+    PickyOptionsError,
     ValueTypeError,
     ValueNotSetError,
     ValueRequiredError,
     ValueInvalidError,
-    ValueLockedError
+    ValueLockedError,
+    ValueNotRequiredError,
+    ValueSetError
 )
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class OnlyChild(BaseModel):
+class Child(Base):
+    __abstract__ = True
     abstract_properties = ('parent_cls', )
 
-    not_set_error = ValueNotSetError
-    required_error = ValueRequiredError
-    invalid_type_error = ValueTypeError
-    invalid_error = ValueInvalidError
-    locked_error = ValueLockedError
+    # TODO: Move logic to the base model to apply in more than one circumstance.
+    errors = (
+        # TODO: Make extensions for the specific object.
+        ('set_error', ValueSetError),
+        ('not_set_error', ValueNotSetError),
+        ('required_error', ValueRequiredError),
+        # TODO: Make extensions for the specific object.
+        ('not_required_error', ValueNotRequiredError),
+        ('invalid_type_error', ValueTypeError),
+        ('invalid_error', ValueInvalidError),
+        ('locked_error', ValueLockedError),
+    )
 
-    def __init__(self, parent=None, **kwargs):
+    def __init__(self, field, parent=None, **kwargs):
+        super(Child, self).__init__()
+
         self._assigned = False
+        self._field = field
+        if not isinstance(self._field, six.string_types):
+            # Use self.raise_invalid_type?
+            raise ValueTypeError(
+                name="field",
+                types=six.string_types,
+            )
+        elif self._field.startswith('_'):
+            # Use self.raise_invalid?
+            raise ValueInvalidError(
+                name="field",
+                detail="It cannot be scoped as a private attribute."
+            )
+
         self._parent = None
         if parent is not None:
             self.assign_parent(parent)
 
-        self.not_set_error = kwargs.get('not_set_error', self.not_set_error)
-        self.invalid_type_error = kwargs.get(
-            'invalid_type_error', self.invalid_type_error)
-        self.required_error = kwargs.get('required_error', self.required_error)
-        self.invalid_error = kwargs.get('invalid_error', self.invalid_error)
-        self.locked_error = kwargs.get('locked_error', self.locked_error)
+        # TODO: Move logic to the base model to apply in more than one
+        # circumstance.
+        for error_tuple in self.errors:
+            # This hasattr might cause problems!
+            if not hasattr(self, error_tuple[0]):
+                object.__setattr__(
+                    self,
+                    error_tuple[0],
+                    kwargs.get(error_tuple[0], error_tuple[1])
+                )
+            else:
+                object.__setattr__(
+                    self,
+                    error_tuple[0],
+                    kwargs.get(error_tuple[0], getattr(self, error_tuple[0]))
+                )
+
+    @property
+    def field(self):
+        return self._field
 
     def assert_set(self, *args, **kwargs):
         if not self.set:
             self.raise_not_set(*args, **kwargs)
 
+    def assert_not_set(self, *args, **kwargs):
+        if self.set:
+            self.raise_set(*args, **kwargs)
+
+    def assert_required(self, *args, **kwargs):
+        if not self.required:
+            self.raise_not_required(*args, **kwargs)
+
+    def assert_not_required(self, *args, **kwargs):
+        if self.required:
+            self.raise_required(*args, **kwargs)
+
+    def raise_with_self(self, *args, **kwargs):
+        kwargs.setdefault('name', self.field)
+        super(Child, self).raise_with_self(*args, **kwargs)
+
+    def raise_set(self, *args, **kwargs):
+        # TODO: Come up with extensions for the specific object.
+        kwargs['cls'] = ValueSetError
+        return self.raise_with_self(*args, **kwargs)
+
     def raise_not_set(self, *args, **kwargs):
         kwargs.setdefault('cls', getattr(self, 'not_set_error'))
+        return self.raise_with_self(*args, **kwargs)
+
+    def raise_locked(self, *args, **kwargs):
+        kwargs['cls'] = self.locked_error
+        return self.raise_with_self(*args, **kwargs)
+
+    def raise_required(self, *args, **kwargs):
+        """
+        Raises an exception to indicate that the `obj:Child` instance is
+        required and does not exist.
+        """
+        kwargs['cls'] = self.required_error
+        return self.raise_with_self(*args, **kwargs)
+
+    def raise_not_required(self, *args, **kwargs):
+        # TODO: Come up with extensions for the specific object.
+        kwargs['cls'] = self.not_required_error
         return self.raise_with_self(*args, **kwargs)
 
     def raise_invalid(self, *args, **kwargs):
@@ -61,15 +139,7 @@ class OnlyChild(BaseModel):
         invalid type.
         """
         assert 'types' in kwargs
-        kwargs.setdefault('cls', getattr(self, 'invalid_type_error'))
-        return self.raise_invalid(*args, **kwargs)
-
-    def raise_required(self, *args, **kwargs):
-        """
-        Raises an exception to indicate that the `obj:Child` instance is
-        required and does not exist.
-        """
-        kwargs.setdefault('cls', getattr(self, 'required_error'))
+        kwargs['cls'] = self.invalid_type_error
         return self.raise_invalid(*args, **kwargs)
 
     @property
@@ -155,18 +225,3 @@ class OnlyChild(BaseModel):
                 )
 
         self._assigned = True
-
-
-class Child(OnlyChild):
-    abstract_properties = OnlyChild.abstract_properties + ('child_identifier',)
-
-    @property
-    def identifier(self):
-        child_identifier = getattr(self, 'child_identifier')
-        if six.callable(child_identifier):
-            return child_identifier(self)
-        return getattr(self, child_identifier)
-
-    def raise_with_self(self, *args, **kwargs):
-        kwargs.setdefault('field', self.identifier)
-        super(Child, self).raise_with_self(*args, **kwargs)
