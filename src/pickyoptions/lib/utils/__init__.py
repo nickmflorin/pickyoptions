@@ -7,6 +7,7 @@ from .path_utils import *  # noqa
 
 
 def is_null(value):
+    # This first conditional takes into account empty strings.
     if hasattr(value, '__iter__') and len(value) == 0:
         return True
     elif value is None:
@@ -19,6 +20,42 @@ def classlookup(cls):
     for base in c:
         c.extend(classlookup(base))
     return c
+
+
+def space_join(*items):
+    """
+    Safely joins an array of iterables together while preventing empty/null
+    values from corrupting the final string spacing and allowing prefix/suffix
+    values to be included for each element if the element is not null.
+
+    Usage:
+    -----
+    >>> space_join(["a", ("b", "", ":"), None, "", "c"])
+    >>> "a b: c"
+    """
+    valid_items = []
+    for item in items:
+        if isinstance(item, tuple):
+            stripped = item[0].strip()
+            if not is_null(stripped):
+                if len(item) == 2:
+                    if not is_null(item[1]):
+                        valid_items.append("%s%s" % (item[1], stripped))
+                    else:
+                        valid_items.append(stripped)
+                elif len(item) >= 3:
+                    if not is_null(item[1]) and not is_null(item[2]):
+                        valid_items.append("%s%s%s" % (
+                            item[1], stripped, item[2]))
+                    elif not is_null(item[1]):
+                        valid_items.append("%s%s" % (item[1], stripped))
+                    elif not is_null(item[2]):
+                        valid_items.append("%s%s" % (stripped, item[2]))
+        else:
+            stripped = item.strip()
+            if stripped != "":
+                valid_items.append(stripped)
+    return " ".join(valid_items)
 
 
 # TODO: Make Python2.7/3 Compatible.

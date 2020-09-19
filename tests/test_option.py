@@ -3,7 +3,7 @@ import pytest
 
 from pickyoptions import Option, Options
 from pickyoptions.core.configuration.exceptions import ConfigurationTypeError
-from pickyoptions.core.option.exceptions import OptionNotSetError
+from pickyoptions.core.options.exceptions import OptionNotSetError
 
 
 def test_get_option_value_option_not_set():
@@ -26,11 +26,11 @@ def test_default_option():
     )
     options.populate(height=1.0)
     option = options.get_option('color')
-    assert option.value_instance.defaulted is True
+    assert option.defaulted is True
 
     options.reset()
     options.populate(color='green', height=1.0)
-    assert option.value_instance.defaulted is False
+    assert option.defaulted is False
 
 
 def test_deepcopy_option():
@@ -52,6 +52,8 @@ def test_deepcopy_option():
 
 def test_option_default_not_of_type():
     with pytest.raises(ConfigurationTypeError):
-        Options(
+        options = Options(
             Option('width', required=False, default=0.0, types=(int, )),
         )
+        # We have to populate because the configuration validation is lazy.
+        options.populate()

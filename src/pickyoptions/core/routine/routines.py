@@ -4,6 +4,8 @@ from .exceptions import RoutineDoesNotExistError
 from .routine import Routine
 
 
+# TODO: Eventually we want to implement this as a Parent instance.  We will have
+# to blend the concept of `field` with `id`.
 class Routines(list):
     def __init__(self, *args):
         assert all([isinstance(x, Routine) for x in args])

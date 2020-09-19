@@ -5,13 +5,11 @@ from pickyoptions.core.options.exceptions import OptionsInvalidError
 
 
 def test_restore_options():
-    print("Creating")
     options = Options(
         Option('color', default='red'),
         Option('height', required=True, types=(int, float)),
         Option('width', required=False, default=0.0, types=(int, float))
     )
-    print("Populating")
     options.populate(color='blue', height=5)
     assert options.color == 'blue'
     assert options.height == 5

@@ -5,12 +5,38 @@ from pickyoptions.core.exceptions import (
     ValueLockedError,
     ValueTypeError,
     ValueInvalidError,
-    ValueRequiredError
+    ValueRequiredError,
+    ValueNullNotAllowedError
 )
 
 
-class ParentHasChildError(PickyOptionsError):
-    default_message = "The parent already has the child in it's children."
+class ParentError(PickyOptionsError):
+    identifier = "Parent Error"
+
+
+class ChildError(PickyOptionsError):
+    identifier = "Child Error"
+
+
+class ChildInvalidError(ValueInvalidError, ChildError):
+    identifier = "Invalid Child"
+    default_message = "The child {name} is invalid."
+
+
+class ChildTypeError(ValueTypeError, ChildInvalidError):
+    @property
+    def default_message(self):
+        types = getattr(self, 'types', None)
+        if types:
+            if len(types) != 0:
+                return "The child `{name}` must be of type {types}."
+            return "The child `{name}` is not of the correct type."
+        return "The child `{name}` is of invalid type."
+
+
+# TODO: Should this be a parent error instead?
+class ChildDoesNotExistError(DoesNotExistError, ChildError):
+    default_message = "The child `{name}` does not exist."
 
 
 class ConfigurationError(PickyOptionsError):
@@ -28,7 +54,7 @@ class NotConfiguredError(ConfigurationError):
     General error to indicate that a specific instance requires configuration
     but has not yet been configured.
     """
-    default_message = "The configuration `{name}` has not been configured."
+    default_message = "The configuration {name} has not been configured."
 
 
 class ConfiguringError(ConfigurationError):
@@ -36,10 +62,10 @@ class ConfiguringError(ConfigurationError):
     General error to indicate that a specific instance is still in the process
     of configuring.
     """
-    default_message = "The configuration `{name}` is already configuring."
+    default_message = "The configuration {name} is already configuring."
 
 
-class ConfigurationDoesNotExist(DoesNotExistError, ConfigurationError):
+class ConfigurationDoesNotExist(ChildDoesNotExistError, ConfigurationError):
     """
     Raised when a specific `obj:Configuration` is accessed in the
     `obj:Configurations` but the `obj:Configuration` does not exist in the
@@ -51,7 +77,7 @@ class ConfigurationDoesNotExist(DoesNotExistError, ConfigurationError):
     __getattr__ method, and we want that error to trigger __hasattr__ to return
     False in the case that the `obj:Configuration` does not exist.
     """
-    default_message = "The configuration `{name}` does not exist."
+    default_message = "The configuration {name} does not exist."
 
 
 class ConfigurationNotSetError(ValueNotSetError, ConfigurationError):
@@ -60,7 +86,7 @@ class ConfigurationNotSetError(ValueNotSetError, ConfigurationError):
     be set but it has not been set yet.
     """
     default_message = (
-        "The configuration `{name}` has not been set on on the instance yet."
+        "The configuration {name} has not been set on on the instance yet."
     )
 
 
@@ -70,17 +96,22 @@ class ConfigurationLockedError(ValueLockedError, ConfiguringError):
     cannot be reconfigured.
     """
     default_message = (
-        "The configuration `{name}` has already been configured and "
+        "The configuration {name} has already been configured and "
         "cannot be reconfigured."
     )
 
 
-class ConfigurationInvalidError(ValueInvalidError, ConfigurationError):
+class ConfigurationInvalidError(ChildInvalidError, ConfigurationError):
     """
     Raised when a provided configuration value is invalid.
     """
     identifier = "Invalid Configuration Error"
-    default_message = "The configuration `{name}` is invalid."
+    default_message = "The configuration {name} is invalid."
+
+
+class ConfigurationNullNotAllowedError(
+        ValueNullNotAllowedError, ConfigurationInvalidError):
+    default_message = "The configuration {name} is not allowed to be null."
 
 
 class ConfigurationRequiredError(ValueRequiredError, ConfigurationError):
@@ -89,10 +120,10 @@ class ConfigurationRequiredError(ValueRequiredError, ConfigurationError):
     to configure it with.
     """
     default_message = (
-        "The configuration `{name}` is required but was not provided.")
+        "The configuration {name} is required but was not provided.")
 
 
-class ConfigurationTypeError(ValueTypeError, ConfigurationInvalidError):
+class ConfigurationTypeError(ChildTypeError, ConfigurationInvalidError):
     """
     Raised when the value supplied to the `obj:Configuration` is of the
     incorrect type.
@@ -102,6 +133,11 @@ class ConfigurationTypeError(ValueTypeError, ConfigurationInvalidError):
         types = getattr(self, 'types', None)
         if types:
             if len(types) != 0:
-                return "The configuration `{name}` must be of type {types}."
-            return "The configuration `{name}` is not of the correct type."
-        return "The configuration `{name}` is of invalid type."
+                return "The configuration {name} must be of type {types}."
+            return "The configuration {name} is not of the correct type."
+        return "The configuration {name} is of invalid type."
+
+
+class ConfigurationValidationError(ConfigurationError):
+    identifier = "Configuration Validation Error"
+    default_message = "The value supplied for configuration {name} is invalid."

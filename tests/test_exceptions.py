@@ -1,6 +1,5 @@
-from pickyoptions.core.exceptions import PickyOptionsError
-from pickyoptions.core.value.exceptions import ValueTypeError
-from pickyoptions.core.option.exceptions import OptionTypeError
+from pickyoptions.core.exceptions import PickyOptionsError, ValueTypeError
+from pickyoptions.core.options.exceptions import OptionTypeError
 
 
 def test_picky_options_error():
@@ -102,3 +101,12 @@ def test_nested_children():
         "\n        --> (3) This is a built in error."
         "\n    --> (2) This is a built in error."
     )
+
+
+def test_transform_error():
+    e1 = PickyOptionsError(message="This is a test message.")
+    print(e1)
+    e2 = e1.transform(ValueTypeError)
+    print(e2)
+    return
+    assert str(e2) == "\nInvalid Value Type: This is a test message."

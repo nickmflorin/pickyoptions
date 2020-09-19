@@ -1,54 +1,63 @@
 import logging
 
-from pickyoptions import settings
+from pickyoptions import settings, constants
 
-from .configurable import Configurable
+from .configurable import ConfigurableParent
 from .configuration import Configuration
 from .exceptions import ConfigurationDoesNotExist
-from .parent import Parent
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 # TODO: Implement child properties like _set, _default and _value.
-# TODO: This acts a little funky as a Child, since the Child class wants to
-# be able to access an identifier...
-class Configurations(Parent, Configurable):
+class Configurations(ConfigurableParent):
     __abstract__ = False
 
-    # Child Implementation Properties
-    parent_cls = ('Options', 'Option')
-    child_identifier = "field"
+    # Parent Implementation Properties
     child_cls = Configuration
-    does_not_exist_error = ConfigurationDoesNotExist
+
+    errors = {
+        'does_not_exist_error': ConfigurationDoesNotExist
+    }
 
     def __init__(self, *configurations, **kwargs):
-        Configurable.__init__(self)
-        Parent.__init__(self, children=list(configurations))
+        validation_error = kwargs.pop('validation_error', None)
+        configuration_error = kwargs.pop('validation_error', None)
 
-        # We will make the validation error required for the time being.
-        for configuration in self.children:
-            configuration._validation_error = kwargs['validation_error']
-
-    def __repr__(self):
-        # TODO: Keep track of state as an attribute.
-        if self.initialized:
-            return "<{cls_name} {configurations}>".format(
-                configurations=self.children,
-                cls_name=self.__class__.__name__
-            )
-        return "<{cls_name} state={state}>".format(
-            state="NOT_INITIALIZED",
-            cls_name=self.__class__.__name__
+        super(Configurations, self).__init__(
+            children=list(configurations),
+            *kwargs
         )
 
-    @property
-    def __isabstractmethod__(self):
-        # This is an annoying side effect of using ABCMeta, not sure exactly
-        # why it is being triggered yet but it is messing with the __getattr__
-        # method.
-        return False
+        # Pass overridden errors down through to the individual
+        # `obj:Configuration` children.
+        for configuration in self.children:
+            configuration.override_errors(
+                validation_error=validation_error,
+                configuration_error=configuration_error
+            )
+
+    def __repr__(self):
+        if self.initialized:
+            return super(Configurations, self).__repr__(
+                configurations=self.children,
+            )
+        return super(Configurations, self).__repr__(
+            state=constants.NOT_INITIALIZED
+        )
+
+    def get_configuration(self, k):
+        # Avoid use of super().__getattr__ because it can be buggy.  We should
+        # only use the __getattr__ for public access.
+        configuration = self.get_child(k)
+        # Keep these as sanity checks for the time being - although this logic
+        # is likely duplicate and should be removed.
+        if configuration.required:
+            if configuration.set:
+                assert not configuration.defaulted
+            assert configuration.configured
+        return configuration
 
     def __getattr__(self, k):
         """
@@ -59,21 +68,9 @@ class Configurations(Parent, Configurable):
         If the `obj:Configuration` does not exist,
         `obj:ConfigurationDoesNotExist` will be raised.
         """
-        # TODO: Should part of this be moved to a parent configurable/simple
-        # configurable class?
-        configuration = super(Configurations, self).__getattr__(k)
-
-        # Keep these as sanity checks for the time being - although this logic
-        # is likely duplicate and should be removed.
-        if configuration.required:
-            if configuration.set:
-                assert not configuration.defaulted
-            # This seems to be causing problems when we try to access the
-            # field configuration from the configurations at times when the
-            # field configuration is not configured.  We should change the field
-            # to not be a configuration.
-            assert configuration.configured
-        return configuration
+        if k.startswith('_'):
+            raise AttributeError("The attribute %s does not exist." % k)
+        return self.get_configuration(k)
 
     def __setattr__(self, k, v):
         """
@@ -108,8 +105,16 @@ class Configurations(Parent, Configurable):
         return self.__class__(*tuple([getattr(self, field) for field in self]))
 
     def validate_configuration(self):
-        if self._validate_configuration is not None:
-            self._validate_configuration()
+        """
+        Validates the individual `obj:Configuration` children in the overall
+        `obj:Configurations`.
+        """
+        pass
+        # Do we want to do this?  What is this accomplishing?  Is this double
+        # validating?
+        # self.parent.validate_configuration()
+        # if self._validate_configuration is not None:
+        #     self._validate_configuration()
 
     def _configure(self, **kwargs):
         """
@@ -119,11 +124,6 @@ class Configurations(Parent, Configurable):
 
         For each field in the key-value pairs, if the `obj:Configuration` does
         not exist for the field, `obj:ConfigurationDoesNotExist` will be raised.
-
-        NOTE:
-        ----
-        The configuration validation is performed in the ConfigurationRoutine
-        of the owner class.
         """
         # Make sure no invalid configurations provided.
         for k, _ in kwargs.items():
@@ -135,14 +135,8 @@ class Configurations(Parent, Configurable):
         # values.
         for field, configuration in self:
             if field in kwargs:
-                # This will set the configuration as being configured - since
-                # the value was explicitly provided.
-                configuration.configure(kwargs[field])
+                configuration.value = kwargs[field]
             else:
-                # This will not set teh configuration as being configured,
-                # since the value was not explicitly provided.  It will
-                # however validate that the configuration is not required
-                # before proceeding.
                 configuration.set_default()
 
     @property

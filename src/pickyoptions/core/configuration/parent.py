@@ -4,27 +4,26 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from pickyoptions.core.base import Base
-from pickyoptions.core.exceptions import DoesNotExistError, ValueTypeError
+from pickyoptions.core.base import Base, BaseMixin
+from pickyoptions.core.decorators import raise_with_error
 
-from .child import Child
-from .exceptions import ParentHasChildError
+from .exceptions import (
+    ChildInvalidError, ChildTypeError, ChildDoesNotExistError, ParentError)
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Parent(Base):
-    __abstract__ = True
+class ParentMixin(BaseMixin):
+    errors = {
+        'does_not_exist_error': ChildDoesNotExistError
+    }
 
-    does_not_exist_error = DoesNotExistError
-    abstract_properties = ('child_cls', )
-
-    def __init__(self, children=None, child_value=None):
-        super(Parent, self).__init__()
-
+    def _init(self, children=None, child_value=None):
         self._children = []
         self._child_value = child_value
+        if self._child_value is not None:
+            assert six.callable(self._child_value)
 
         children = children or []
         for child in children:
@@ -50,28 +49,24 @@ class Parent(Base):
             field = child.field
         return field in self.fields
 
-    def raise_if_child_missing(self, child):
-        if not self.has_child(child):
-            self.raise_no_child(name=(
-                child if isinstance(child, six.string_types)
-                else child.field
-            ))
-
-    # TODO: Maybe we want to prevent this, or only allow it in certain
-    # circumstances.  Either way, it shouldn't be blanket allowed for the
-    # ParentModel...  We should add some restriction to how children are added/set
-    # For the `obj:Options` case, this is very important.
     @children.setter
     def children(self, children):
-        logger.debug("Replace n children")
+        # TODO: Maybe we want to prevent this, or only allow it in certain
+        # circumstances.  Either way, it shouldn't be blanket allowed for the
+        # ParentModel...  We should add some restriction to how children are
+        # added/set. For the `obj:Options` case, this is very important.
+        logger.debug("Replacing %s children with %s new children." % (
+            len(self.children),
+            len(children),
+        ))
         self.remove_children()
         self.add_children(children)
 
     def validate_child(self, child):
-        assert isinstance(child, Child)
+        if not child.is_child:
+            raise ChildInvalidError("The child must be a valid Child instance.")
         if not extends_or_instance_of(child, self.child_cls):
-            # TODO: Come up with a better error.
-            raise ValueTypeError(
+            raise ChildTypeError(
                 value=child,
                 message="The child must be of type `{types}`.",
                 types=self.child_cls,
@@ -103,18 +98,25 @@ class Parent(Base):
     def zipped(self):
         return [(field, value) for field, value in self]
 
-    def raise_child_does_not_exist(self, *args, **kwargs):
-        kwargs['cls'] = self.does_not_exist_error
-        super(Parent, self).raise_with_self(self, *args, **kwargs)
+    def raise_if_child_missing(self, child):
+        if not self.has_child(child):
+            self.raise_child_does_not_exist(name=(
+                child if isinstance(child, six.string_types)
+                else child.field
+            ))
 
-    def get_child(self, field):
+    @raise_with_error(error='does_not_exist_error')
+    def raise_child_does_not_exist(self, *args, **kwargs):
+        super(ParentMixin, self).raise_with_self(*args, **kwargs)
+
+    def get_child(self, k):
         try:
             return [
                 child for child in self.children
-                if child.field == field
+                if child.field == k
             ][0]
         except IndexError:
-            self.raise_child_does_not_exist(name=field)
+            self.raise_child_does_not_exist(name=k)
 
     def new_children(self, children):
         self.remove_children()
@@ -129,10 +131,9 @@ class Parent(Base):
         self._children.remove(child)
 
     def assign_child(self, child):
-        # TODO: Should we deepcopy the child?
         self.validate_child(child)
         if self.has_child(child):
-            raise ParentHasChildError()
+            raise ParentError("The parent already has the provided child.")
 
         # This must come first to prevent a recursion error between parent/child.
         self._children.append(child)
@@ -156,3 +157,12 @@ class Parent(Base):
     def add_children(self, children):
         for child in children:
             self.assign_child(child)
+
+
+class Parent(Base, ParentMixin):
+    __abstract__ = True
+    abstract_properties = ('child_cls', )
+
+    def __init__(self, children=None, child_value=None):
+        super(Parent, self).__init__()
+        ParentMixin._init(self, children=children, child_value=child_value)

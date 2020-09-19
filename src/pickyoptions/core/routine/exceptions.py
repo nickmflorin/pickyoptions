@@ -13,6 +13,10 @@ class RoutineNotFinishedError(RoutineError):
     default_message = "The routine {id} is not finished."
 
 
+class RoutineFinishedError(RoutineError):
+    default_message = "The routine {id} is already finished."
+
+
 class RoutineInProgressError(RoutineError):
     default_message = "The routine {id} is still in progress."
 

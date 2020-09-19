@@ -4,7 +4,8 @@ import six
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
 
-from pickyoptions.core.base import Base
+from pickyoptions.core.base import Base, BaseMixin
+from pickyoptions.core.decorators import raise_with_error
 from pickyoptions.core.exceptions import (
     PickyOptionsError,
     ValueTypeError,
@@ -13,33 +14,28 @@ from pickyoptions.core.exceptions import (
     ValueInvalidError,
     ValueLockedError,
     ValueNotRequiredError,
-    ValueSetError
+    ValueSetError,
+    ValueNullNotAllowedError
 )
+from .exceptions import ChildInvalidError, ChildTypeError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-class Child(Base):
-    __abstract__ = True
-    abstract_properties = ('parent_cls', )
+class ChildMixin(BaseMixin):
+    errors = {
+        'set_error': ValueSetError,
+        'not_set_error': ValueNotSetError,
+        'required_error': ValueRequiredError,
+        'not_required_error': ValueNotRequiredError,
+        'invalid_type_error': ChildTypeError,
+        'invalid_error': ChildInvalidError,
+        'locked_error': ValueLockedError,
+        'not_null_error': ValueNullNotAllowedError
+    }
 
-    # TODO: Move logic to the base model to apply in more than one circumstance.
-    errors = (
-        # TODO: Make extensions for the specific object.
-        ('set_error', ValueSetError),
-        ('not_set_error', ValueNotSetError),
-        ('required_error', ValueRequiredError),
-        # TODO: Make extensions for the specific object.
-        ('not_required_error', ValueNotRequiredError),
-        ('invalid_type_error', ValueTypeError),
-        ('invalid_error', ValueInvalidError),
-        ('locked_error', ValueLockedError),
-    )
-
-    def __init__(self, field, parent=None, **kwargs):
-        super(Child, self).__init__()
-
+    def _init(self, field, parent=None, error_map=None):
         self._assigned = False
         self._field = field
         if not isinstance(self._field, six.string_types):
@@ -58,23 +54,6 @@ class Child(Base):
         self._parent = None
         if parent is not None:
             self.assign_parent(parent)
-
-        # TODO: Move logic to the base model to apply in more than one
-        # circumstance.
-        for error_tuple in self.errors:
-            # This hasattr might cause problems!
-            if not hasattr(self, error_tuple[0]):
-                object.__setattr__(
-                    self,
-                    error_tuple[0],
-                    kwargs.get(error_tuple[0], error_tuple[1])
-                )
-            else:
-                object.__setattr__(
-                    self,
-                    error_tuple[0],
-                    kwargs.get(error_tuple[0], getattr(self, error_tuple[0]))
-                )
 
     @property
     def field(self):
@@ -96,50 +75,51 @@ class Child(Base):
         if self.required:
             self.raise_required(*args, **kwargs)
 
-    def raise_with_self(self, *args, **kwargs):
-        kwargs.setdefault('name', self.field)
-        super(Child, self).raise_with_self(*args, **kwargs)
-
+    # TODO: Come up with extensions for the specific object.
+    @raise_with_error(error=ValueSetError)
     def raise_set(self, *args, **kwargs):
-        # TODO: Come up with extensions for the specific object.
-        kwargs['cls'] = ValueSetError
         return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error='not_set_error')
     def raise_not_set(self, *args, **kwargs):
-        kwargs.setdefault('cls', getattr(self, 'not_set_error'))
         return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error='locked_error')
     def raise_locked(self, *args, **kwargs):
-        kwargs['cls'] = self.locked_error
         return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error='required_error')
     def raise_required(self, *args, **kwargs):
         """
         Raises an exception to indicate that the `obj:Child` instance is
         required and does not exist.
         """
-        kwargs['cls'] = self.required_error
         return self.raise_with_self(*args, **kwargs)
 
+    # TODO: Come up with extensions for the specific object.
+    # TODO: Is this even being used anymore?
+    @raise_with_error(error='not_required_error')
     def raise_not_required(self, *args, **kwargs):
-        # TODO: Come up with extensions for the specific object.
-        kwargs['cls'] = self.not_required_error
         return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error='not_null_error')
+    def raise_null_not_allowed(self, *args, **kwargs):
+        return self.raise_with_self(*args, **kwargs)
+
+    @raise_with_error(error='invalid_error')
     def raise_invalid(self, *args, **kwargs):
         """
         Raises an exception to indicate that the `obj:Child` instance is invalid.
         """
-        kwargs.setdefault('cls', getattr(self, 'invalid_error'))
         return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error='invalid_type_error')
     def raise_invalid_type(self, *args, **kwargs):
         """
         Raises an exception to indicate that the `obj:Child` instance is of
         invalid type.
         """
         assert 'types' in kwargs
-        kwargs['cls'] = self.invalid_type_error
         return self.raise_invalid(*args, **kwargs)
 
     @property
@@ -225,3 +205,12 @@ class Child(Base):
                 )
 
         self._assigned = True
+
+
+class Child(ChildMixin, Base):
+    __abstract__ = True
+    abstract_properties = ('parent_cls', )
+
+    def __init__(self, field, parent=None, **kwargs):
+        super(Child, self).__init__()
+        ChildMixin._init(field, parent=parent, **kwargs)

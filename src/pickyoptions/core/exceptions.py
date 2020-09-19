@@ -1,18 +1,68 @@
-from pickyoptions.lib.utils import is_null, ensure_iterable
+from abc import ABCMeta
+from copy import deepcopy
+import logging
+import six
+
+from pickyoptions import settings
+from pickyoptions.lib.utils import (
+    ensure_iterable, merge_dicts, merge_lists, extends_or_instance_of,
+    space_join)
+
+
+logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 def make_bold(value):
     return "\033[1m" + "%s" % value + "\033[0;0m"
 
 
-class PickyOptionsError(Exception):
+# Until we figure out how to appropriately use the __new__ method for an object,
+# without the name, bases and dct attrributes, we have to use the ABCMeta as our
+# base.
+class PickyOptionsErrorMeta(ABCMeta):
+    """
+    Metaclass for the `obj:Base` model.
+    """
+    def __new__(cls, name, bases, dct):
+        # Conglomerate Default Injection from Parents
+        default_injections = []
+        for parent in bases:
+            base_injection = deepcopy(getattr(parent, 'default_injection', {}))
+            assert isinstance(base_injection, dict)
+            default_injections.append(base_injection)
+        default_injection = merge_dicts(default_injections)
+
+        this_default_injection = deepcopy(
+            dct.pop('default_injection', {}))
+        assert isinstance(this_default_injection, dict)
+        default_injection.update(this_default_injection)
+
+        # Set the class default injection as the combined injections.
+        dct['default_injection'] = default_injection
+
+        # Conglomerate Ignore Prefix Injection from Parents
+        ignore_prefix_injections = []
+        for parent in bases:
+            base_ignore = deepcopy(
+                getattr(parent, 'ignore_prefix_injection', ()))
+            assert isinstance(base_ignore, (tuple, list, str))
+            ignore_prefix_injections.append(base_ignore)
+        this_ignore = deepcopy(dct.pop('ignore_prefix_injection', ()))
+        ignore_prefix_injections.append(this_ignore)
+
+        dct['ignore_prefix_injections'] = merge_lists(
+            ignore_prefix_injections, cast=tuple)
+
+        return super(PickyOptionsErrorMeta, cls).__new__(cls, name, bases, dct)
+
+
+class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
     """
     Base class for all pickyoptions exceptions.
     """
     default_message = "There was an error."
     default_injection = {}
-    ignore_prefix_injectable_arguments = ('instance', )
-    ignore_body_injectable_arguments = ()
+    ignore_prefix_injection = ('instance', )
 
     def __init__(self, *args, **kwargs):
         super(PickyOptionsError, self).__init__()
@@ -20,6 +70,8 @@ class PickyOptionsError(Exception):
         # This is tough to do recursively because of the stipulation that other
         # built in errors should be able to be nested.
         self._children = kwargs.pop('children', [])
+
+        # TODO: Figure out how to do this for an infinite level of nesting.
         self._indent_level = 0
         for child in self.children:
             child._indent_level = self._indent_level + 1
@@ -33,96 +85,93 @@ class PickyOptionsError(Exception):
         self._newline = kwargs.pop('newline', True)
         self._bold_identifier = kwargs.pop('bold_identifier', True)
         self._detail = kwargs.pop('detail', None)
-
-        self.identifier = kwargs.pop('identifier',
-            getattr(self, 'identifier', None))
+        self._include_prefix = kwargs.pop('include_prefix', True)
 
         # Add in the injection arguments.
-        self._injectable_arguments = []
+        self._injection = {}
         for k, v in kwargs.items():
             if k != 'message':
-                self._injectable_arguments.append(k)
-                setattr(self, k, v)
+                self._injection[k] = v
 
-        # Add in the default injection arguments.
-        for k, v in self.default_injection.items():
-            if k not in self._injectable_arguments:
-                self._injectable_arguments.append(k)
-                assert not hasattr(self, k)
-                setattr(self, k, v)
+        self._identifier = kwargs.pop('identifier',
+            getattr(self, 'identifier', None))
 
         # NOTE: This has to come after the injectable arguments are set, because
         # the default message sometimes accesses the injectable arguments set
         # on the instance.
         self._message = (
             args[0] if len(args) != 0
-            else kwargs.pop('message', getattr(self, 'default_message'))
+            else kwargs.pop('message', self.default_message)
         )
+
+    def __getattr__(self, k):
+        if k in self._injection:
+            return self._injection[k]
+        raise AttributeError("The attribute %s does not exist." % k)
+
+    def __setattr__(self, k, v):
+        if not k.startswith('_'):
+            if k in self._injection:
+                logger.debug(
+                    "Overwriting exception value for %s, %s, with %s." % (
+                        k, self._injection[k], v)
+                )
+            self._injection[k] = v
+        else:
+            super(PickyOptionsError, self).__setattr__(k, v)
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, deepcopy(v, memo))
+        return result
+
+    def transform(self, cls, **kwargs):
+        """
+        Transforms the `obj:PickyOptionsError` instance into another
+        `obj:PickyOptionsError` instance, provided by `cls`, overriding the
+        properties with the provided parameters.
+
+        Parameters:
+        ----------
+        cls: `obj:type`
+            The PickyOptionsError class for which we want to transform the
+            error.  This parameter must be a class that is PickyOptionsError or
+            a class that extends PickyOptionsError.
+        """
+        if not extends_or_instance_of(cls, PickyOptionsError):
+            raise ValueError("The class must extend PickyOptionsError.")
+
+        new_cls = cls.__new__(cls)
+        for k, v in self.__dict__.items():
+            if k in kwargs:
+                setattr(new_cls, k, deepcopy(kwargs[k]))
+            else:
+                setattr(new_cls, k, deepcopy(v))
+        return new_cls
+
+    @property
+    def injection(self):
+        injection = {}
+        prefix_injection = {}
+        for k, v in self._injection.items():
+            if self._has_injection_placeholder(k):
+                injection[k] = v
+            else:
+                prefix_injection[k] = v
+        for k, v in self.default_injection.items():
+            if k not in injection and self._has_injection_placeholder(k):
+                injection[k] = v
+        return injection, prefix_injection
 
     @property
     def children(self):
         return self._children
 
-    def indent_children(self):
-        for child in self._children:
-            child._indent_level = self._indent_level + 1
-            # child.indent_children()
-
     def _has_injection_placeholder(self, argument):
         return "{%s}" % argument in self.message
-
-    @property
-    def _body_injectable_arguments(self):
-        arguments = []
-        for argument in self._injectable_arguments:
-            if (
-                self._has_injection_placeholder(argument)
-                and argument not in self.ignore_body_injectable_arguments
-            ):
-                value = getattr(self, argument)
-                if not is_null(value):
-                    arguments.append((argument, value))
-        return arguments
-
-    @property
-    def _prefix_injectable_arguments(self):
-        arguments = []
-        for argument in self._injectable_arguments:
-            if (
-                not self._has_injection_placeholder(argument)
-                and argument not in self.ignore_prefix_injectable_arguments
-            ):
-                # The value should have been set on the instance.
-                value = getattr(self, argument)
-                if not is_null(value):
-                    arguments.append((argument, value))
-        return arguments
-
-    @property
-    def _injected_message_prefix(self):
-        return "(%s)" % ", ".join([
-            "%s = %s" % (argument, v)
-            for argument, v in self._prefix_injectable_arguments
-        ]) if self._prefix_injectable_arguments else ""
-
-    @property
-    def _injected_message_body(self):
-        injection = {}
-        for k, v in self._body_injectable_arguments:
-            injection[k] = v
-        # Note: This can raise KeyError's if there are references to {...} in
-        # the string message but the parameter defined is not provided.  We
-        # should figure out a way around this.
-        return self.message.format(**injection)
-
-    @property
-    def _injected_message(self):
-        if self._injected_message_prefix:
-            return "%s %s" % (
-                self._injected_message_prefix,
-                self._injected_message_body
-            )
-        return self._injected_message_body
 
     def _format_child(self, child, index):
         assert isinstance(child, Exception)
@@ -139,18 +188,11 @@ class PickyOptionsError(Exception):
             formatted_child = "(%s) %s" % (index + 1, formatted_child)
         if self._indent_children:
             indentation = "    " * (child._indent_level)
-            if not self._indent_children.endswith(' '):
-                formatted_child = "%s%s %s" % (
-                    indentation,
-                    self._indent_children,
-                    formatted_child
-                )
-            else:
-                formatted_child = "%s%s%s" % (
-                    indentation,
-                    self._indent_children,
-                    formatted_child
-                )
+            return space_join(
+                indentation,
+                self._indent_children,
+                formatted_child
+            )
         return formatted_child
 
     @property
@@ -161,12 +203,12 @@ class PickyOptionsError(Exception):
         ])
 
     @property
-    def _formatted_identifier(self):
-        if self.identifier is not None:
+    def identifier(self):
+        if self._identifier is not None:
             if self._bold_identifier:
-                return make_bold(self.identifier)
+                return make_bold(self._identifier)
             return self._identifier
-        return None
+        return ""
 
     @property
     def has_children(self):
@@ -181,17 +223,31 @@ class PickyOptionsError(Exception):
 
     @property
     def full_message(self):
-        full_message = self._injected_message
-        if self._formatted_identifier is not None:
-            full_message = "%s: %s" % (
-                self._formatted_identifier,
-                full_message
-            )
+        injection, prefix_injection = self.injection
 
+        full_message = self.message.format(**injection)
         if not full_message.endswith('.'):
             full_message = "%s." % full_message
-        if self._detail:
-            full_message = "%s %s" % (full_message, self._detail)
+        assert full_message[0] != " "
+
+        detail = self._detail or ""
+        if (detail != "" and not detail.endswith('(')
+                and not detail.startswith('(')):
+            detail = "(%s)" % detail
+
+        prefix = ""
+        if self._include_prefix:
+            prefix = " ".join([
+                "(%s=%s)" % (k, v)
+                for k, v in prefix_injection.items()
+            ])
+
+        full_message = space_join(
+            (self.identifier, "", ":"),
+            prefix,
+            full_message,
+            detail
+        )
         if self._newline:
             full_message = "\n%s" % full_message
         if self._formatted_children:
@@ -234,6 +290,10 @@ class ValueLockedError(PickyOptionsValueError):
 
 class ValueRequiredError(PickyOptionsValueError):
     default_message = "The {name} is required."
+
+
+class ValueNullNotAllowedError(PickyOptionsValueError):
+    default_message = "The {name} is not allowed to be null."
 
 
 class ValueNotRequiredError(PickyOptionsValueError):

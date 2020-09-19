@@ -1,6 +1,10 @@
 import six
 
+from pickyoptions import constants
+
 from pickyoptions.lib.utils import get_num_function_arguments
+from pickyoptions.core.decorators import accumulate_errors
+
 from .configuration import Configuration
 
 
@@ -25,15 +29,23 @@ class CallableConfiguration(Configuration):
             )
         return self._error_message or default_message
 
-    def validate(self):
-        super(CallableConfiguration, self).validate()
-        if self.value is not None:
-            if not six.callable(self.value):
-                self.raise_invalid(self.error_message)
+    @accumulate_errors(error_cls='validation_error')
+    def do_validate_value(self, value, **kwargs):
+        yield super(CallableConfiguration, self).do_validate_value(value,
+            return_children=True)
+        if value is not None and value != constants.EMPTY:
+            if not six.callable(value):
+                yield self.raise_invalid(
+                    message=self.error_message,
+                    return_exception=True,
+                )
             elif self.num_arguments is not None:
-                num_found_arguments = get_num_function_arguments(self.value)
+                num_found_arguments = get_num_function_arguments(value)
                 if num_found_arguments != self.num_arguments:
-                    self.raise_invalid(self.error_message)
+                    yield self.raise_invalid(
+                        message=self.error_message,
+                        return_exception=True,
+                    )
 
 
 class TypesConfiguration(Configuration):
@@ -45,21 +57,37 @@ class TypesConfiguration(Configuration):
             return None
         return value
 
-    def validate(self):
-        super(TypesConfiguration, self).validate()
-        if self.value is not None:
-            if not hasattr(self.value, '__iter__'):
-                self.raise_invalid(message="Must be an iterable of types.")
-            for tp in self.value:
-                if not isinstance(tp, type):
-                    self.raise_invalid(message="Must be an iterable of types.")
+    @accumulate_errors(error_cls='validation_error')
+    def do_validate_value(self, value, detail=None):
+        yield super(TypesConfiguration, self).do_validate_value(value,
+            return_children=True, detail=detail)
+        if value is not None and value != constants.EMPTY:
+            if (not hasattr(value, '__iter__')
+                    or isinstance(value, six.string_types)):
+                yield self.raise_invalid(
+                    message="The configuration {name} be an iterable of types.",
+                    return_exception=True,
+                    detail=detail,
+                    value=value,
+                )
+            else:
+                if any([not isinstance(tp, type) for tp in value]):
+                    yield self.raise_invalid(
+                        message=(
+                            "The configuration {name} be an iterable of types."
+                        ),
+                        return_exception=True,
+                        detail=detail,
+                        value=value,
+                    )
 
     def conforms_to(self, value):
         """
         Checks whether or not the provided value conforms to the types
         specified by this configuration.
         """
-        if self.value is not None:
+        self.assert_set()
+        if self.provided and self.value is not None:
             assert type(self.value) is tuple
             if value is None or not isinstance(value, self.value):
                 return False

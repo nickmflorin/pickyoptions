@@ -1,67 +1,19 @@
-import functools
 import logging
+import six
 
 from pickyoptions import settings
-from pickyoptions.lib.utils import optional_parameter_decorator
 
 from pickyoptions.core.base import Base
+from pickyoptions.core.decorators import raise_with_error
 
 from .constants import RoutineState
 from .exceptions import (
-    RoutineNotFinishedError, RoutineInProgressError, RoutineNotInProgressError)
+    RoutineNotFinishedError, RoutineInProgressError, RoutineNotInProgressError,
+    RoutineFinishedError)
+from .utils import require_finished, require_not_in_progress
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
-
-
-@optional_parameter_decorator
-def require_not_in_progress(func, id=None):
-    """
-    Decorator to decorate routine related methods that require that the
-    specified routine's state is not IN_PROGRESS.
-
-    The decorator can be applied to a `obj:Routine` itself or a class that
-    extends `obj:Routined`.  In the latter case, the `id` needs to be supplied
-    so that the specific `obj:Routine` can be found.
-    """
-    @functools.wraps(func)
-    def inner(instance, *args, **kwargs):
-        from .routined import Routined
-
-        if isinstance(instance, Routined):
-            routine = getattr(instance.routines, id)
-        else:
-            assert isinstance(instance, Routine)
-            routine = instance
-        if routine.in_progress:
-            routine.raise_in_progress()
-        return func(instance, *args, **kwargs)
-    return inner
-
-
-@optional_parameter_decorator
-def require_finished(func, id=None):
-    """
-    Decorator to decorate routine related methods that require that the
-    specified routine's state is FINISHED.
-
-    The decorator can be applied to a `obj:Routine` itself or a class that
-    extends `obj:Routined`.  In the latter case, the `id` needs to be supplied
-    so that the specific `obj:Routine` can be found.
-    """
-    @functools.wraps(func)
-    def inner(instance, *args, **kwargs):
-        from .routined import Routined
-
-        if isinstance(instance, Routined):
-            routine = getattr(instance.routines, id)
-        else:
-            assert isinstance(instance, Routine)
-            routine = instance
-        if not routine.finished:
-            routine.raise_not_finished()
-        return func(instance, *args, **kwargs)
-    return inner
 
 
 class Routine(Base):
@@ -86,9 +38,13 @@ class Routine(Base):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._state = RoutineState.FINISHED
         if exc_type:
+            self._state = RoutineState.ERROR
+            # Not sure if we want this?
+            print("THERE WAS AN ERROR - MAKE SURE NOT SWALLED")
+            six.reraise(exc_type, exc_val, exc_tb)
             return False
+        self._state = RoutineState.FINISHED
         self.post_routine(self._instance)
         return False
 
@@ -149,7 +105,6 @@ class Routine(Base):
         """
         if self._post_routine:
             self._post_routine()
-
         self.clear_queue()
 
     @require_not_in_progress
@@ -167,49 +122,40 @@ class Routine(Base):
         """
         # The queue should have already been cleared by the post_routine.
         assert len(self.queue) == 0
-
         if self._pre_routine:
             self._pre_routine()
 
+    @raise_with_error(id='id')
+    def raise_with_self(self, *args, **kwargs):
+        return super(Routine, self).raise_with_self(*args, **kwargs)
+
+    @raise_with_error(error=RoutineInProgressError)
     def raise_in_progress(self, *args, **kwargs):
         """
         Raises an error to indicate that the `obj:Routine` is in progress.
         """
-        kwargs.update(
-            cls=RoutineInProgressError,
-            id=self.id
-        )
-        self.raise_with_self(*args, **kwargs)
+        return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error=RoutineNotInProgressError)
     def raise_not_in_progress(self, *args, **kwargs):
         """
         Raises an error to indicate that the `obj:Routine` is not in progress.
         """
-        kwargs.update(
-            cls=RoutineNotInProgressError,
-            id=self.id
-        )
-        self.raise_with_self(*args, **kwargs)
+        return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error=RoutineFinishedError)
     def raise_finished(self, *args, **kwargs):
         """
         Raises an error to indicate that the `obj:Routine` has not finished.
         """
-        kwargs.update(
-            cls=RoutineNotFinishedError,
-            id=self.id
-        )
-        self.raise_with_self(*args, **kwargs)
+        return self.raise_with_self(*args, **kwargs)
 
+    @raise_with_error(error=RoutineNotFinishedError)
     def raise_not_finished(self, *args, **kwargs):
         """
         Raises an error to indicate that the `obj:Routine` has not finished.
         """
-        kwargs.update(
-            cls=RoutineNotFinishedError,
-            id=self.id
-        )
-        self.raise_with_self(*args, **kwargs)
+        return self.raise_with_self(*args, **kwargs)
 
     def add_to_queue(self, obj):
         """

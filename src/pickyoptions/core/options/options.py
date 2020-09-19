@@ -6,20 +6,29 @@ import sys
 
 from pickyoptions import settings
 
+from pickyoptions.core.base import lazy
 from pickyoptions.core.configuration import (
-    Configuration, Configurations, ConfigurationsConfigurable)
+    Configuration, Configurations, ConfigurationsConfigurableParent)
 from pickyoptions.core.configuration.configuration_lib import (
     CallableConfiguration)
-from pickyoptions.core.family import Parent
 from pickyoptions.core.routine import Routine
 from pickyoptions.core.routine.routine import (
     require_not_in_progress, require_finished)
 
 from .constants import OptionsState
 from .exceptions import (
-    OptionsInvalidError, OptionsNotConfiguredError, OptionsConfiguringError,
-    OptionDoesNotExist, OptionInvalidError)
+    OptionsInvalidError,
+    OptionsNotConfiguredError,
+    OptionsConfiguringError,
+    OptionDoesNotExistError,
+    OptionInvalidError,
+    OptionsNotPopulatedError,
+    OptionsNotPopulatedPopulatingError,
+    OptionsPopulatedError
+)
+from .mixins import PopulatingMixin
 from .option import Option
+from .utils import require_populated
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -70,7 +79,7 @@ class OptionsRoutine(Routine):
         instance.do_post_process()
 
 
-class Options(ConfigurationsConfigurable, Parent):
+class Options(ConfigurationsConfigurableParent, PopulatingMixin):
     """
     The entry point for using pickyoptions in a project.
 
@@ -116,16 +125,22 @@ class Options(ConfigurationsConfigurable, Parent):
     >>> from my_package import options
     >>> assert options.foo = "fooey"
     """
-    ___abstract__ = False
-
-    # SimpleConfigurable Implementation Properties
-    not_configured_error = OptionsNotConfiguredError
-    configuring_error = OptionsConfiguringError
+    __abstract__ = False
 
     # Parent Implementation Properties
     child_cls = Option
-    child_identifier = "field"
-    does_not_exist_error = OptionDoesNotExist
+
+    errors = {
+        # Child Implementation Properties
+        'does_not_exist_error': OptionDoesNotExistError,
+        # Configurable Implementation Properties
+        'not_configured_error': OptionsNotConfiguredError,
+        'configuring_error': OptionsConfiguringError,
+        # Populated Implementation Properties
+        'not_populated_error': OptionsNotPopulatedError,
+        'not_populated_populating_error': OptionsNotPopulatedPopulatingError,
+        'populated_error': OptionsPopulatedError,
+    }
 
     # TODO: We should consider moving this inside the instance, because it might
     # be causing code to be run unnecessarily on import.
@@ -147,17 +162,18 @@ class Options(ConfigurationsConfigurable, Parent):
             )
         ),
         Configuration('strict', default=False, types=(bool, )),
+        # TOOD: Change this!
         validation_error=OptionsInvalidError,
     )
 
     def __init__(self, *args, **kwargs):
         self._state = OptionsState.NOT_INITIALIZED
-        Parent.__init__(
-            self,
+        # TODO: Should we include the validate_configuration method?
+        super(Options, self).__init__(
             children=list(args),
-            child_value=lambda child: child.value
+            child_value=lambda child: child.value,
+            **kwargs
         )
-        ConfigurationsConfigurable.__init__(self, **kwargs)
         self.create_routine(
             id="populating",
             cls=OptionsRoutine,
@@ -245,11 +261,11 @@ class Options(ConfigurationsConfigurable, Parent):
     def state(self):
         return self._state
 
-    @property
-    def populated(self):
-        if self.routines.populating.did_run:
-            assert self.state != OptionsState.NOT_POPULATED
-        return self.routines.populating.did_run
+    # @property
+    # def populated(self):
+    #     if self.routines.populating.did_run:
+    #         assert self.state != OptionsState.NOT_POPULATED
+    #     return self.routines.populating.did_run
 
     @property
     def overridden(self):
@@ -291,7 +307,7 @@ class Options(ConfigurationsConfigurable, Parent):
         kwargs.setdefault('cls', OptionsInvalidError)
         return self.raise_with_self(*args, **kwargs)
 
-    # @with_routine(id="populating")
+    @lazy
     def populate(self, *args, **kwargs):
         """
         Populates the configured `obj:Options` instance with values for each
@@ -312,18 +328,27 @@ class Options(ConfigurationsConfigurable, Parent):
                     # Keep track of the options that were explicitly populated so
                     # they can be used to reset the `obj:Options` to it's
                     # previously populated state at a later point in time.
+                    option.assert_populated()
+                    assert not option.defaulted
                     routine.register(option)
                 else:
                     option.set_default()
                     # If the option wasn't explicitly populated we don't store it
                     # in the routine history because we only need the explicitly
                     # populated options to revert state.
+                    option.assert_not_populated()
+                    assert option.defaulted
+                    # Right now, this will add defaulted options to the queue
+                    # which will cause them to post process with options... We
+                    # might not want that?
                     routine.register(option, history=False)
 
+    @require_populated
     def post_populate(self):
         assert self.state == OptionsState.NOT_POPULATED
         self._state = OptionsState.POPULATED_NOT_OVERRIDDEN
 
+    @require_populated
     def override(self, *args, **kwargs):
         """
         Overrides the configured `obj:Options` instance with values for each
@@ -426,13 +451,9 @@ class Options(ConfigurationsConfigurable, Parent):
         values until they are set.
         """
         self._state = OptionsState.NOT_POPULATED
-        # If initialized, all of the routines we want to reset will be present.
-        # Otherwise, it will just be the configuration routine - which we don't
-        # want to reset.  Do we have to worry about the defaulting routine?
-        assert 'defaulting' not in [routine.id for routine in self.routines]
-        if self.initialized:
-            self.routines.subsection(
-                ['populating', 'overriding', 'restoring']).reset()
+        # Note: Do not reset the configuration routine.
+        self.routines.subsection(
+            ['populating', 'overriding', 'restoring']).reset()
         for option in self.options:
             option.reset()
 
@@ -499,6 +520,7 @@ class Options(ConfigurationsConfigurable, Parent):
         to the (4) protocols above, an exception will be raised.
         """
         configuration = self.configurations['validate']
+        configuration.assert_set()
         if configuration.value is not None:
             logger.debug("Validating overall options.")
             try:
