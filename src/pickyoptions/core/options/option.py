@@ -302,6 +302,10 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
 
     @require_configured_property
     def locked(self):
+        """
+        Returns whether or not the `obj:Option` is locked.  In the case that the
+        `obj:Option` is locked, it cannot be overridden.
+        """
         # TODO: Should we allow this to be setable?  What about the other
         # configurations?
         configuration = self.configurations['locked']
@@ -310,12 +314,21 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
 
     @require_configured_property
     def enforce_types_on_null(self):
+        """
+        Returns whether or not to enforce the `types` configuration parameter
+        when the `obj:Option` supplied value is None.
+        """
         configuration = self.configurations['enforce_types_on_null']
         assert configuration.set
         return configuration.value
 
     @require_configured_property
     def required(self):
+        """
+        Returns whether or not the `obj:Option` is required.  If the `obj:Option`
+        is required, an explicit value is required to be supplied during
+        population.
+        """
         # TODO: Should we allow this to be setable?  What about the other
         # configurations?
         configuration = self.configurations['required']
@@ -499,12 +512,23 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
     @require_set
     def override(self, value):
         """
+        Overrides the populated or defaulted `obj:Option` with the provided
+        value.  The override will be cleared in the event that the `obj:Option`
+        is restored.
+
         Note that this does not trigger lazy initialization, since it requires
         that the `obj:Option` was already set.
+
+        TODO:
+        ----
+        - What to do if the `obj:Option` is overridden explicitly with None
+          or it's default?
         """
-        # TODO: If the `obj:Option` is overridden with `None`, and the `default`
-        # exists, should it revert to the default?  This needs to be tested.
-        # TODO: What to do if option is explicitly overridden with None.
+        # This check is also done in the value setter, but is it more appropriate
+        # here?  What about external sets?
+        if self.set and self.locked:
+            self.raise_locked()
+
         with self.routines.overriding as routine:
             routine.register(value)
             self.value = value
