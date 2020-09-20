@@ -18,21 +18,46 @@ def track_init(func):
     @functools.wraps(func)
     def inner(instance, *args, **kwargs):
         assert not instance.__initialized__
+        instance.__initializing__ = True
+
         func(instance, *args, **kwargs)
+
         # This will not save the initialization state if it has already been
         # manually saved inside the __init__ method.
         instance.save_initialization_state(*args, **kwargs)
-        # Perform the post init operations on the instance.
-        instance.post_init(*args, **kwargs)
+
         # Mark the instance as initialized.
         instance.__initialized__ = True
+        instance.__initializing__ = False
+
+        # Perform the post init operations on the instance.
+        if hasattr(instance, '__postinit__'):
+            instance.__postinit__(*args, **kwargs)
+    return inner
+
+
+def lazy_init(func):
+    assert func.__name__ == "__lazyinit__"
+    @functools.wraps(func)
+    def inner(instance):
+        assert instance.__initialized__
+        assert not instance.__lazyinitialized__
+        instance.__lazy_initializing__ = True
+
+        func(instance,
+            *instance.__lazyinitargs__, **instance.__lazyinitkwargs__)
+
+        # Mark the instance as initialized.
+        instance.__lazyinitialized__ = True
+        instance.__lazy_initializing__ = False
     return inner
 
 
 def lazy(func):
     @functools.wraps(func)
     def inner(instance, *args, **kwargs):
-        instance.perform_lazy_init()
+        assert instance.initialized
+        instance.__lazyinit__()
         return func(instance, *args, **kwargs)
     return inner
 
@@ -51,82 +76,145 @@ class BaseMeta(ABCMeta):
     Metaclass for the `obj:Base` model.
     """
     def __new__(cls, name, bases, dct):
-        # Assign abstract properties.  Note that the abstract properties are not
-        # inherited, which is what we want.
-        if 'abstract_properties' in dct:
-            for abstract_property_name in dct['abstract_properties']:
+
+        def merge_base_dicts(attribute):
+            """
+            Merges in data from the provided bases and joins that data with
+            the data for this class.
+            """
+            # Merge all of the dicts for each base together.
+            results = []
+            for base in bases:
+                default_value = deepcopy(getattr(base, attribute, dict()))
+                assert isinstance(default_value, dict)
+                if default_value not in results:
+                    results.append(default_value)
+            results = merge_dicts(results)
+
+            # Merge the dictionary of merged base values with the dictionary of
+            # values on this class.
+            current_value = deepcopy(dct.get(attribute, dict()))
+            results.update(**current_value)
+            return results
+
+        def merge_base_iterables(attribute, cast=list):
+            """
+            Merges in data from the provided bases and joins that data with
+            the data for this class.
+            """
+            # Merge all of the lists for each base together.
+            results = []
+            for base in bases:
+                default_value = deepcopy(getattr(base, attribute, tuple()))
+                assert isinstance(default_value, (tuple, list))
+                for val in default_value:
+                    if val not in results:
+                        results.append(val)
+
+            # Merge the list of merged base values with the list of values
+            # on this class.
+            current_value = dct.get(attribute, tuple())
+            for val in current_value:
+                assert not isinstance(val, (list, tuple))
+                results.append(val)
+            return cast(results)
+
+        is_abstract = dct.get('__abstract__', True)
+
+        # These properties are not allowed to be on a class if it is not
+        # abstract.
+        abstracts = (
+            'abstract_properties',
+            'abstract_methods',
+            'required_errors'
+        )
+
+        # Make sure the above properties are not on a class if it is not
+        # abstract.
+        if not is_abstract and any([x in dct for x in abstracts]):
+            found = [x for x in abstracts if x in dct]
+            assert len(found) != 0
+            raise TypeError(
+                "Cannot specify properties %s for a non-abstract "
+                "class." % ", ".join(found)
+            )
+
+        # Conglomerate the error mappings together, regardless of whether or
+        # not it is abstract.
+        dct['errors'] = merge_base_dicts('errors')
+
+        if is_abstract:
+            # If the class is abstract, conglomerate abstract properties with the
+            # bases and assign @abstractproperty decorated properties to the
+            # abstract class.
+            abstract_properties = merge_base_iterables('abstract_properties')
+            # Only store the combined abstract properties on the class if it
+            # is not abstract - this allows for multiple levels of inheritance.
+            dct['abstract_properties'] = tuple(abstract_properties)
+
+            # NOTE: This might cause some @abstractproperty decorated properties
+            # to be overwritten from the exact form in the inheritance - this is
+            # not a big deal but should be noted.
+            for prop in abstract_properties:
                 @abstractproperty
                 def func(*args, **kwargs):
                     pass
-                func.__name__ = abstract_property_name
-                dct[abstract_property_name] = func
+                func.__name__ = prop
+                dct[prop] = func
 
-        # Assign abstract methods.  Note that the abstract methods are not
-        # inherited, which is what we want.
-        if 'abstract_methods' in dct:
-            for abstract_method_name in dct['abstract_methods']:
+            # If the class is abstract, conglomerate abstract methods with the
+            # bases and assign @abstractmethod decorated methods to the abstract
+            # class.
+            abstract_methods = merge_base_iterables('abstract_methods')
+            # Only store the combined abstract methods on the class if it
+            # is not abstract - this allows for multiple levels of inheritance.
+            dct['abstract_methods'] = tuple(abstract_methods)
+
+            # NOTE: This might cause some @abstractmethod decorated properties
+            # to be overwritten from the exact form in the inheritance - this is
+            # not a big deal but should be noted.
+            for method in abstract_methods:
                 @abstractmethod
                 def func(*args, **kwargs):
                     pass
-                func.__name__ = abstract_method_name
-                dct[abstract_method_name] = func
+                func.__name__ = method
+                dct[method] = func
 
-        # Conglomerate the required errors together.
-        required_errors = list(dct.get('required_errors', ()))[:]
-        for base in bases:
-            base_required_errors = getattr(base, 'required_errors', [])
-            for err in base_required_errors:
-                if err not in required_errors:
-                    required_errors.append(err)
-        dct['required_errors'] = tuple(required_errors)
+            # Conglomerate the required errors together.
+            required_errors = merge_base_iterables('required_errors')
+            dct['required_errors'] = tuple(required_errors)
 
-        # Conglomerate the parent error mappings for all base classes.
-        parent_error_mappings = []
-        for parent in bases:
-            base_mapping = deepcopy(getattr(parent, 'errors', {}))
-            assert isinstance(base_mapping, dict)
-            parent_error_mappings.append(base_mapping)
-        errors = merge_dicts(parent_error_mappings)
-
-        # Update the parent error mappings with the instance error mappings.
-        this_errors = deepcopy(dct.pop('errors', {}))
-        assert isinstance(this_errors, dict)
-        errors.update(this_errors)
-
-        # Make sure all of the required errors are present.
-        for err in dct['required_errors']:
-            if err not in errors:
-                raise Exception("Error %s is missing from class %s." % (
-                    err, name))
-
-        # Set the merged error mapping on the class.
-        dct['errors'] = errors
-
-        # If the model is not an abstract one, we want to track the init to
-        # perform the post_init method when it is finished.
-        if dct.get('__abstract__', True) is False:
+            # Make sure all of the required errors are present.
+            for err in dct['required_errors']:
+                if err not in dct['errors'] and not is_abstract:
+                    raise Exception("Error %s is missing from class %s." % (
+                        err, name))
+        else:
+            # If the model is not an abstract one, we want to track the init to
+            # perform the post_init method when it is finished.
             dct['__lazyinitargs__'] = ()
             dct['__lazyinitkwargs__'] = {}
 
-            # If the model is not abstract, it's parents should all be abstract.
-            for kls in bases:
-                base_abstract = getattr(kls, '__abstract__', True)
-                if base_abstract is False:
-                    raise PickyOptionsError(
-                        "Each __abstract__ model can only have "
-                        "non-__abstract__ parents."
-                    )
-
         instance = super(BaseMeta, cls).__new__(cls, name, bases, dct)
-        if dct.get('__abstract__', True) is False:
-            assert not hasattr(instance.__init__, '__tracked__')
-            instance.__init__ = track_init(instance.__init__)
-            instance.__init__.__tracked__ = True
-            # Note: This means the lazy_init cannot be used in parent abstract
-            # classes - we should validate this.
-            # This is all in an attempt to quell the recursion issues.
-            # if hasattr(instance, 'lazy_init'):
-            #     instance.lazy_init = during_lazy_init(instance.lazy_init)
+
+        # Note: For the __init__ and lazy_init methods, we cannot have a
+        # non-abstract class extend a non-abstract class and override these
+        # methods - the decorators will be applied to both.  We should build in
+        # a check for this, or maybe just manually place the decorators.
+        if not is_abstract:
+            if hasattr(instance, '__init__'):
+                # Make sure that the instance __init__ method is not already
+                # decorated.
+                assert not hasattr(instance.__init__, '__decorated__')
+                instance.__init__ = track_init(instance.__init__)
+                instance.__init__.__decorated__ = True
+
+            if hasattr(instance, '__lazyinit__'):
+                # Make sure that the instance __lazyinit__ method is not already
+                # decorated.
+                assert not hasattr(instance.__lazyinit__, '__decorated__')
+                instance.__lazyinit__ = lazy_init(instance.__lazyinit__)
+                instance.__lazyinit__.__decorated__ = True
 
         return instance
 
@@ -145,77 +233,28 @@ class BaseMixin(object):
     errors = {}
     require_errors = ()
 
-    def override_errors(self, *args, **kwargs):
-        """
-        Overrides the errors on the instance class with different errors.  The
-        provided errors must already exist in the error mapping for the
-        instance.
-        """
-        data = dict(*args, **kwargs)
-        for k, v in data.items():
-            if k not in self.errors:
-                raise Exception(
-                    "Cannot override error %s on %s instance as it does not "
-                    "have the error to begin with." % (
-                        k, self.__class__.__name__)
-                )
-            if v is not None:
-                self.errors[k] = v
-
-    def save_initialization_state(self, *args, **kwargs):
-        """
-        Stores the arguments provided on initialization so they can be
-        reapplied to lazy initialization routines later on.
-
-        The initialization state is only allowed to be saved once.  If
-        attempting to save the state outside of __init__, the state will not
-        update (since the save_initialization_state decorator already applied
-        them at the end of __init__).
-
-        If manually saving the initialization state, the state must be saved
-        inside of the __init__ method.
-        """
-        if self.__lazyinit_state_stored__ is False:
-            self.__lazyinitargs__ = tuple(args)
-            self.__lazyinitkwargs__ = dict(**kwargs)
-            self.__lazyinit_state_stored__ = True
-
-    @property
-    def initialized(self):
-        return self.__initialized__
-
     @property
     def is_abstract(self):
         return getattr(self, '__abstract__', True) is True
 
-    def perform_lazy_init(self):
-        if self.is_abstract:
-            raise Exception("Only non-abstract classes can lazily initialize.")
-
-        # In an attempt to mitigate the chance of recursion problems.
-        if self.__lazy_initializing__:
-            raise Exception("The class instance is already lazy initializing.")
-
-        if not self.__lazy_initialized__:
-            # Lazy init might not actually be present on the instance.
-            # This is all in an attempt to quell the recursion issues.
-            # if hasattr(self, 'lazy_init'):
-            # This now means that lazy_init cannot be called publically.
-            self.__lazy_initializing__ = True
-            assert hasattr(self, 'lazy_init')
-            self.lazy_init(*self.__lazyinitargs__, **self.__lazyinitkwargs__)
-            self.__lazy_initializing__ = False
-            self.__lazy_initialized__ = True
-
-    def post_init(self, *args, **kwargs):
-        if self.initialized:
-            raise PickyOptionsError(
-                "Cannot perform post_init once the instance is initialized.")
-
-    # The lazy init cannot be used in parent abstract classes because we are
-    # tracking it, the base lazy init is the only one that can be called.
-    # def lazy_init(self, *args, **kwargs):
-    #     pass
+    # def perform_lazy_init(self):
+    #     if self.is_abstract:
+    #         raise Exception("Only non-abstract classes can lazily initialize.")
+    #
+    #     # In an attempt to mitigate the chance of recursion problems.
+    #     if self.__lazy_initializing__:
+    #         raise Exception("The class instance is already lazy initializing.")
+    #
+    #     if not self.__lazy_initialized__:
+    #         # Lazy init might not actually be present on the instance.
+    #         # This is all in an attempt to quell the recursion issues.
+    #         # if hasattr(self, 'lazy_init'):
+    #         # This now means that lazy_init cannot be called publically.
+    #         self.__lazy_initializing__ = True
+    #         assert hasattr(self, 'lazy_init')
+    #         self.lazy_init(*self.__lazyinitargs__, **self.__lazyinitkwargs__)
+    #         self.__lazy_initializing__ = False
+    #         self.__lazy_initialized__ = True
 
     def create_routine(self, id, cls=None, **kwargs):
         from pickyoptions.core.routine.routine import Routine
@@ -260,9 +299,13 @@ class BaseMixin(object):
 
 class Base(six.with_metaclass(BaseMeta, BaseMixin)):
     __abstract__ = True
+
     __initialized__ = False
-    __lazy_initialized__ = False
-    __lazy_initializing__ = False
+    __initializing__ = False
+
+    __lazyinitialized__ = False
+    __lazyinitializing__ = False
+
     __lazyinit_state_stored__ = False
 
     def __init__(self, routines=None, errors=None):
@@ -270,18 +313,38 @@ class Base(six.with_metaclass(BaseMeta, BaseMixin)):
         # be passed to the init method of the Base.
         from pickyoptions.core.routine.routines import Routines
 
-        if not self.__initialized__:
-            if not isinstance(routines, Routines):
-                routines = ensure_iterable(routines, cast=tuple)
-                self.routines = Routines(*routines)
-            else:
-                self.routines = routines
+        # If the base is initialized multiple times, routines that were created
+        # in __init__ will be overridden.
+        if self.initialized:
+            raise Exception("The base is being initialized multiple times.")
+
+        if not isinstance(routines, Routines):
+            routines = ensure_iterable(routines, cast=tuple)
+            self.routines = Routines(*routines)
+        else:
+            self.routines = routines
 
         # Allow errors to be overridden on initialization.  To do this, we need
         # to make sure the class errors are not mutated.
         errors = errors or {}
         self.errors = deepcopy(self.errors)
         self.errors.update(**errors)
+
+    @property
+    def initialized(self):
+        return self.__initialized__
+
+    @property
+    def lazy_initialized(self):
+        return self.__lazyinitialized__
+
+    @property
+    def initializing(self):
+        return self.__initializing__
+
+    @property
+    def lazy_initializing(self):
+        return self.__lazyinitializing__
 
     def __repr__(self, **kwargs):
         return "<%s %s>" % (
@@ -296,3 +359,38 @@ class Base(six.with_metaclass(BaseMeta, BaseMixin)):
         for k, v in self.__dict__.items():
             setattr(result, k, deepcopy(v, memo))
         return result
+
+    def override_errors(self, *args, **kwargs):
+        """
+        Overrides the errors on the instance class with different errors.  The
+        provided errors must already exist in the error mapping for the
+        instance.
+        """
+        data = dict(*args, **kwargs)
+        for k, v in data.items():
+            if k not in self.errors:
+                raise Exception(
+                    "Cannot override error %s on %s instance as it does not "
+                    "have the error to begin with." % (
+                        k, self.__class__.__name__)
+                )
+            if v is not None:
+                self.errors[k] = v
+
+    def save_initialization_state(self, *args, **kwargs):
+        """
+        Stores the arguments provided on initialization so they can be
+        reapplied to lazy initialization routines later on.
+
+        The initialization state is only allowed to be saved once.  If
+        attempting to save the state outside of __init__, the state will not
+        update (since the save_initialization_state decorator already applied
+        them at the end of __init__).
+
+        If manually saving the initialization state, the state must be saved
+        inside of the __init__ method.
+        """
+        if self.__lazyinit_state_stored__ is False:
+            self.__lazyinitargs__ = tuple(args)
+            self.__lazyinitkwargs__ = dict(**kwargs)
+            self.__lazyinit_state_stored__ = True

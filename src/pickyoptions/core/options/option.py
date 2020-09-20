@@ -1,18 +1,22 @@
 from copy import deepcopy
 import logging
 import six
+import sys
 
 from pickyoptions import settings, constants
 
 from pickyoptions.core.base import lazy
+from pickyoptions.core.exceptions import PickyOptionsError
+from pickyoptions.core.decorators import require_set, accumulate_errors
+
 from pickyoptions.core.configuration import (
     Configuration, Configurations, ConfigurationsConfigurableChild)
 from pickyoptions.core.configuration.configuration_lib import (
     CallableConfiguration, TypesConfiguration)
+from pickyoptions.core.configuration.exceptions import (
+    ConfigurationDoesNotExistError)
 from pickyoptions.core.configuration.utils import (
     require_configured, require_configured_property)
-from pickyoptions.core.exceptions import PickyOptionsError
-from pickyoptions.core.decorators import require_set, accumulate_errors
 
 from .exceptions import (
     OptionInvalidError,
@@ -28,12 +32,19 @@ from .exceptions import (
     OptionNotPopulatedPopulatingError,
     OptionPopulatedError,
     OptionNullNotAllowedError,
-    OptionDoesNotExistError
+    OptionDoesNotExistError,
+    OptionSetError,
+    OptionNotRequiredError
 )
 from .mixins import PopulatingMixin
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
+
+
+# TODO: Eventually we might want to move these to some sort of settings setup.
+VALIDATE_NORMALIZED_VALUE_IF_SAME = False
+VALIDATE_NORMALIZED_VALUE_IF_ORIGINAL_INVALID = True
 
 
 class Option(ConfigurationsConfigurableChild, PopulatingMixin):
@@ -125,8 +136,10 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         # Child Implementation Properties
         'does_not_exist_error': OptionDoesNotExistError,
         'not_set_error': OptionNotSetError,
+        'set_error': OptionSetError,
         'locked_error': OptionLockedError,
         'required_error': OptionRequiredError,
+        'not_required_error': OptionNotRequiredError,
         'invalid_error': OptionInvalidError,
         'invalid_type_error': OptionTypeError,
         'not_null_error': OptionNullNotAllowedError,
@@ -149,6 +162,8 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         Configuration('allow_null', types=(bool, ), default=False),
         Configuration('locked', types=(bool, ), default=False),
         Configuration('post_process_on_default', types=(bool, ), default=False),
+        # TODO: Consider allowing types to take on None as a value.
+        Configuration('enforce_types_on_null', types=(bool, ), default=True),
         TypesConfiguration('types'),
         CallableConfiguration(
             'validate',
@@ -214,10 +229,10 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         self.create_routine(id="overriding")
         self.create_routine(id="restoring")
 
-    # Do we really want to do this lazily?  It might hide bugs that are internal
-    # due to internal configurations set on the Option...
-    def lazy_init(self, **kwargs):
-        super(Option, self).lazy_init(**kwargs)
+    def __lazyinit__(self, **kwargs):
+        # Do we really want to do this lazily?  It might hide bugs that are
+        # internal due to internal configurations set on the Option...
+        super(Option, self).__lazyinit__(**kwargs)
         self.assert_configured()
 
     @lazy
@@ -256,18 +271,23 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         # are cases where an attribute might exist on the `obj:Configurations`
         # but is not a `obj:Configuration`.  We want to restrict the __getattr__
         # for public use only.
-        configuration = self.configurations.get_configuration(k)
+        try:
+            configuration = self.configurations.get_configuration(k)
+        except ConfigurationDoesNotExistError:
+            if settings.DEBUG:
+                raise AttributeError("The attribute %s does not exist." % k)
+            six.reraise(*sys.exc_info())
+        else:
+            # This will only ever be True if we are entering a recursion, which
+            # this check blocks.
+            # if not self.__lazy_initializing__:
+            #     self.perform_lazy_init()
 
-        # This will only ever be True if we are entering a recursion, which this
-        # check blocks.
-        if not self.__lazy_initializing__:
-            self.perform_lazy_init()
-
-        # Wait to make the assertion down here so that __hasattr__ will return
-        # False before checking if the `obj:Option` is configured.v
-        self.assert_configured()
-        configuration.assert_set()
-        return configuration.value
+            # Wait to make the assertion down here so that __hasattr__ will return
+            # False before checking if the `obj:Option` is configured.v
+            self.assert_configured()
+            configuration.assert_set()
+            return configuration.value
 
     @property
     def field(self):
@@ -286,6 +306,12 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         # TODO: Should we allow this to be setable?  What about the other
         # configurations?
         configuration = self.configurations['locked']
+        assert configuration.set
+        return configuration.value
+
+    @require_configured_property
+    def enforce_types_on_null(self):
+        configuration = self.configurations['enforce_types_on_null']
         assert configuration.set
         return configuration.value
 
@@ -323,6 +349,11 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         else:
             assert self._value == constants.NOTSET
         return self._set
+
+    @property
+    def provided(self):
+        # What about the case when the default is explicitly provided?
+        return self._value != constants.EMPTY
 
     @property
     def empty(self):
@@ -679,21 +710,40 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
                 self.parent
             )
 
-    # TODO: Start using a validation error, specific to each object.  Should
-    # we maybe be using a configuration error instead of a validation error?
     @require_configured
     @accumulate_errors(error_cls='invalid_error', name='field')
     def do_validate_value(self, value, detail=None, **kwargs):
-        # TODO: Log a warning if the value is being explicitly set as the
-        # default value.
+        """
+        Validates the provided value based on the configuration specifications
+        of the `obj:Option`.  When the value is deemed invalid, the errors are
+        accumulated together into an overall error.
+
+        Parameters:
+        ----------
+        value: `obj:any`
+            The value to validate based on the configuration parameters of the
+            `obj:Option`.
+
+        detail: `obj:str` (optional)
+            Additional detail to include in the errors if the value is deemed
+            invalid for any reason.
+
+            Default: None
+
+        TODO:
+        ----
+        - Start using a validation error specific to each object?
+        - Log a warning if the value is being explicitly set as the default
+          value.
+        """
+        # If the value is EMPTY, it will trigger the default value to be used.
+        # The default value and normalized default value should have already
+        # been validated.
         if value == constants.EMPTY:
-            # This will trigger the default value to be used, and the
-            # normalized default value is already validated in the validate
-            # configuration method.
+            # If the `obj:Option` is required, an exception should have already
+            # been raised to disallow providing the default.
             if self.required:
-                # If the value is None but required, an exception should have
-                # already been raised in the configuration validation to
-                # disallow providing the default.
+                # Sanity checks - leave for time being.
                 assert not self.default_provided
                 assert self.default is None
                 yield self.raise_required(
@@ -711,28 +761,33 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
                         detail=detail
                     )
                 # If the `obj:Option` does not allow null but is not required,
-                # raise the Exception as not allowing null.
+                # raise to indicate that the `obj:Option` does not allow null.
                 elif not self.allow_null:
                     yield self.raise_null_not_allowed(
                         return_exception=True,
                         detail=detail
                     )
+                # If the `obj:Option` value is null, it does not conform to the
+                # types (if specified).
+                elif self.enforce_types_on_null and self.types is not None:
+                    yield self.raise_invalid_type(
+                        return_exception=True,
+                        detail=detail,
+                        types=self.types
+                    )
             else:
                 if self.types is not None:
-                    if not isinstance(value, self.types):
+                    configuration = self.configurations['types']
+                    if not configuration.conforms_to(value):
                         yield self.raise_invalid_type(
                             return_exception=True,
                             detail=detail,
                             types=self.types
                         )
 
-        # The default and normalized default are already checked in the
-        # configuration validation - so we are really only concerned if the
-        # value is not one of those.
-        # TODO: For the above reason, should we only be performing validation
-        # if the value is not EMPTY (i.e. it is not defaulting)?
-        # TODO: Maybe we should allow the validate method to return error
-        # messages or other things like we do for the Option case.
+        # TODO: Since the default and normalized default are already checked in
+        # the configuration validation, should we only perform validation here
+        # if the value is not EMPTY?
         if self.validate is not None:
             # TODO: Should we be transforming this in some way instead of just
             # appending the children?
@@ -752,51 +807,41 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         This validation is defined by the parameter `validate` provided to the
         `obj:Option` on initialization.
 
-        Since this validation does not reference the overall `obj:Options`
-        instance (and is performed independently of the overall `obj:Options`
-        instance) it does not wait for the `obj:Options` routine to finish, but
-        instead is immediately called when the `obj:Option` finishes populating,
-        overriding or restoring.
-
         Parameters:
         ----------
         value: `obj:any` (optional)
-            The value to validate.  This is optionally provided because there
-            are cases where we want to perform the validation preemptively
-            on a default or normalized default value.
+            The value to validate.  This is optionally provided so that this
+            method can be called externally to validate the existing value on
+            the `obj:Option`.
 
             Default: `obj:Option` instance value
-
-        sender: `obj:type` (optional)
-            The class of the instance calling the method, if applicable.
-
-            If we call the method on the `obj:Option` externally, we want it to
-            also perform the validation on the `obj:Value` instance itself.  If
-            the method on the `obj:Option` is called internally by the
-            `obj:Value` instance, we don't want to perform the validation
-            inside the `obj:Value` instance.
-
-            Default: None
         """
         if 'value' in kwargs:
             value = kwargs.pop('value')
-            yield self.do_validate_value(value, return_children=True)
+            errors = self.do_validate_value(value, return_children=True)
+            yield errors
+
+            # If the original value was not valid and the settings indicate
+            # we should not validate the normalized value in this case, do not
+            # validate the normalizd value.
+            if (len(errors) != 0
+                    and not VALIDATE_NORMALIZED_VALUE_IF_ORIGINAL_INVALID):
+                return
 
             # Validate the normalized value if it is applicable.
-            # TODO: We only care about this in the case that the value is not
-            # defaulted, and the normalized value is different from the actual
-            # value.  Maybe we should account for this in the logic.
-            # TODO: Should we maybe only do this if there are no errors with the
-            # actual value?
             if self.normalize is not None:
-                # TODO: Maybe we should wrap this in some kind of different
-                # exception to make it more obvious what is going on.
+                # TODO: In the case that the value is defaulted, the normalized
+                # default will have already been validated in the configuration
+                # validation, so maybe we should skip that condition?
                 normalized_value = self.do_normalize(value)
-                yield self.do_validate_value(
-                    normalized_value,
-                    return_children=True,
-                    detail="(Normalized Value)"
-                )
+                if normalized_value != value or VALIDATE_NORMALIZED_VALUE_IF_SAME:
+                    # TODO: Maybe we should wrap this in some kind of different
+                    # exception to make it more obvious what is going on.
+                    yield self.do_validate_value(
+                        normalized_value,
+                        return_children=True,
+                        detail="(Normalized Value)"
+                    )
         else:
             # If being called externally, the value must be SET - otherwise,
             # there is no value to validate.
@@ -807,12 +852,13 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
     @require_configured
     def validate_configuration(self):
         """
-        Validates the parameters of the `obj:Configuration` configuration.
+        Validates the parameters of the `obj:Option` configuration after it
+        is configured.
 
         This validation is independent of any value that would be set on the
-        `obj:Configuration`, so it runs after initialiation and after the
-        configuration values are changed, but not when the actual value on the
-        `obj:Configruation` changes.
+        `obj:Option`, so it runs lazily after initialization and when
+        individual configuration values are altered, but not when the\
+        `obj:Option` value is changed..
         """
         # Validate that the default is not provided in the case that the value
         # is required.
@@ -844,8 +890,19 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
                 return_children=True
             )
             if errors:
+                # TODO: Right now this will display the error as an Invalid Option
+                # nested under an Invalid Configuration Error.  The Invalid Option
+                # is slightly misleading because it indicates that the option
+                # value is invalid, instead of the fact that that the
+                # configuration value does not conform to the option specs.
                 configuration = self.configurations['default']
                 yield configuration.raise_invalid(
                     return_exception=True,
                     children=errors,
+                    value=self.default,
+                    detail=(
+                        "If providing a default value, the default value must "
+                        "also conform to the configuration specifications on "
+                        "the option."
+                    )
                 )

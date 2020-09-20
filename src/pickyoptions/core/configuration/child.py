@@ -1,5 +1,4 @@
 import logging
-import six
 
 from pickyoptions import settings
 from pickyoptions.lib.utils import extends_or_instance_of
@@ -9,48 +8,27 @@ from pickyoptions.core.decorators import raise_with_error
 from pickyoptions.core.exceptions import (
     PickyOptionsError,
     ValueTypeError,
-    ValueNotSetError,
-    ValueRequiredError,
-    ValueInvalidError,
-    ValueLockedError,
-    ValueNotRequiredError,
-    ValueSetError,
-    ValueNullNotAllowedError
 )
-from .exceptions import ChildInvalidError, ChildTypeError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 class ChildMixin(BaseMixin):
-    errors = {
-        'set_error': ValueSetError,
-        'not_set_error': ValueNotSetError,
-        'required_error': ValueRequiredError,
-        'not_required_error': ValueNotRequiredError,
-        'invalid_type_error': ChildTypeError,
-        'invalid_error': ChildInvalidError,
-        'locked_error': ValueLockedError,
-        'not_null_error': ValueNullNotAllowedError
-    }
+    abstract_properties = ('parent_cls', )
+    required_errors = (
+        'set_error',
+        'not_set_error',
+        'required_error',
+        'not_required_error',
+        'invalid_type_error',
+        'invalid_error',
+        'locked_error',
+        'not_null_error',
+    )
 
-    def _init(self, field, parent=None, error_map=None):
+    def _init(self, parent=None, error_map=None):
         self._assigned = False
-        self._field = field
-        if not isinstance(self._field, six.string_types):
-            # Use self.raise_invalid_type?
-            raise ValueTypeError(
-                name="field",
-                types=six.string_types,
-            )
-        elif self._field.startswith('_'):
-            # Use self.raise_invalid?
-            raise ValueInvalidError(
-                name="field",
-                detail="It cannot be scoped as a private attribute."
-            )
-
         self._parent = None
         if parent is not None:
             self.assign_parent(parent)
@@ -58,6 +36,10 @@ class ChildMixin(BaseMixin):
     @property
     def field(self):
         return self._field
+
+    def raise_with_self(self, *args, **kwargs):
+        kwargs['name'] = self.field
+        return super(ChildMixin, self).raise_with_self(*args, **kwargs)
 
     def assert_set(self, *args, **kwargs):
         if not self.set:
@@ -75,17 +57,28 @@ class ChildMixin(BaseMixin):
         if self.required:
             self.raise_required(*args, **kwargs)
 
-    # TODO: Come up with extensions for the specific object.
-    @raise_with_error(error=ValueSetError)
+    @raise_with_error(error='set_error')
     def raise_set(self, *args, **kwargs):
+        """
+        Raises an exception to indicate that the `obj:Child` instance is set
+        when it is not expected to be set.
+        """
         return self.raise_with_self(*args, **kwargs)
 
     @raise_with_error(error='not_set_error')
     def raise_not_set(self, *args, **kwargs):
+        """
+        Raises an exception to indicate that the `obj:Child` instance is not
+        set when it is expected to be set.
+        """
         return self.raise_with_self(*args, **kwargs)
 
     @raise_with_error(error='locked_error')
     def raise_locked(self, *args, **kwargs):
+        """
+        Raises an exception to indicate that the `obj:Child` instance is
+        locked and cannot be altered.
+        """
         return self.raise_with_self(*args, **kwargs)
 
     @raise_with_error(error='required_error')
@@ -209,8 +202,7 @@ class ChildMixin(BaseMixin):
 
 class Child(ChildMixin, Base):
     __abstract__ = True
-    abstract_properties = ('parent_cls', )
 
-    def __init__(self, field, parent=None, **kwargs):
+    def __init__(self, parent=None, **kwargs):
         super(Child, self).__init__()
-        ChildMixin._init(field, parent=parent, **kwargs)
+        ChildMixin._init(parent=parent, **kwargs)

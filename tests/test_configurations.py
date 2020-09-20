@@ -5,6 +5,11 @@ from pickyoptions.core.configuration.configuration_lib import TypesConfiguration
 from pickyoptions.core.configuration.exceptions import ConfigurationError
 
 
+def test_configuration_configured_on_init():
+    configuration = Configuration('field', default='test')
+    assert configuration.configured is True
+
+
 def test_types_configuration():
     configuration = TypesConfiguration('types')
     configuration.value = (str, int)

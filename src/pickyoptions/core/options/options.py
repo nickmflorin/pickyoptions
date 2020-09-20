@@ -47,9 +47,7 @@ class OptionsRoutine(Routine):
             % len(self.queue)
         )
         for option in self.queue:
-            # We can't make this assertion now that we are using this method
-            # more generally.
-            # assert option.populated
+            assert option.set
             # I don't think we need to call the post_routine, because that will
             # be called when the value is set...
             # option.post_routine()
@@ -79,6 +77,7 @@ class OptionsRoutine(Routine):
         instance.do_post_process()
 
 
+# TODO: Allow Options to be initialized as lazy=True or lazy=False.
 class Options(ConfigurationsConfigurableParent, PopulatingMixin):
     """
     The entry point for using pickyoptions in a project.
@@ -212,44 +211,44 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
     def __repr__(self):
         if self.initialized:
             if self.populated:
-                return "<{cls_name} state={state} {params}>".format(
-                    cls_name=self.__class__.__name__,
+                return super(Options, self).__repr__(
                     state=self.state,
                     params=", ".join([
                         "{k}={v}".format(k=k, v=v)
                         for k, v in self.zipped
                     ])
                 )
-            return "<{cls_name} state={state} [{options}]>".format(
-                cls_name=self.__class__.__name__,
+            return super(Options, self).__repr__(
                 state=self.state,
                 options=", ".join([option.field for option in self.children])
             )
-        return "<{cls_name} state={state}>".format(
-            state=self.state,
-            cls_name=self.__class__.__name__
-        )
+        return super(Options, self).__repr__(state=self.state)
 
     def __getattr__(self, k):
+        if k.startswith('_'):
+            raise AttributeError("The attribute %s does not exist." % k)
+
+        # First check if the value is a configuration.
         if self.configurations.has_child(k):
             self.assert_configured()
-            configuration = getattr(self.configurations, k)
+            configuration = self.configurations.get_configuration(k)
             return configuration.value
 
         # We have to assume that the value is referring to an `obj:Option`.
-        option_value = super(Options, self).__getattr__(k)
-        if not self.routines.populating.finished:
-            self.raise_not_populated()
-        return option_value
+        self.assert_populated()
+        return super(Options, self).__getattr__(k)
 
     def __setattr__(self, k, v):
         if not self.initialized or k.startswith('_'):
             object.__setattr__(self, k, v)
         else:
-            assert self.configured
+            # Only allow configurations or values to be set on the `obj:Options`
+            # if they are already configured.
+            self.assert_configured()
+            self.configurations.assert_configured()
             if self.configurations.has_child(k):
                 configuration = self.configurations[k]
-                assert configuration.configured == self.configurations.configured == self.configured  # noqa
+                configuration.assert_configured()
                 setattr(self.configurations, k, v)
             else:
                 option = self.get_child(k)
@@ -260,12 +259,6 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
     @property
     def state(self):
         return self._state
-
-    # @property
-    # def populated(self):
-    #     if self.routines.populating.did_run:
-    #         assert self.state != OptionsState.NOT_POPULATED
-    #     return self.routines.populating.did_run
 
     @property
     def overridden(self):
@@ -444,6 +437,8 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
         Resets the `obj:Options` state back to the post configuration state
         before any options were populated.
 
+        NOTE:
+        ----
         Note that after the `obj:Options` have been reset, the `obj:Options`
         require re-population of the options before any option values can be
         accessed on the `obj:Options` instance.  This is because potentially
@@ -645,8 +640,7 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
         pass
 
 
-# TODO: This is causing code to run on import, which isn't ideal.  What we should
-# do is make the configuration validation conditionally lazy - so it is performed
-# when the options are first used, not when they are first instantiated.
-# >>> optinos = Options(lazy=True)
+# TODO: Initialize as lazy=True
 options = None
+if not settings.DEBUG:
+    options = Options()

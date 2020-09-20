@@ -22,6 +22,16 @@ def classlookup(cls):
     return c
 
 
+def strip_if_not_blank(value):
+    """
+    Strips the string value if and only if all the characters in the string
+    are not " ".
+    """
+    if any([i != " " for i in value]):
+        return value.strip()
+    return value
+
+
 def space_join(*items):
     """
     Safely joins an array of iterables together while preventing empty/null
@@ -35,8 +45,12 @@ def space_join(*items):
     """
     valid_items = []
     for item in items:
+        if item is None:
+            continue
         if isinstance(item, tuple):
-            stripped = item[0].strip()
+            if item[0] is None:
+                continue
+            stripped = strip_if_not_blank(item[0])
             if not is_null(stripped):
                 if len(item) == 2:
                     if not is_null(item[1]):
@@ -52,7 +66,7 @@ def space_join(*items):
                     elif not is_null(item[2]):
                         valid_items.append("%s%s" % (stripped, item[2]))
         else:
-            stripped = item.strip()
+            stripped = strip_if_not_blank(item)
             if stripped != "":
                 valid_items.append(stripped)
     return " ".join(valid_items)

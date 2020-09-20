@@ -5,7 +5,8 @@ from pickyoptions.core.exceptions import (
     ValueLockedError,
     ValueRequiredError,
     ValueNullNotAllowedError,
-    DoesNotExistError
+    ValueSetError,
+    ValueNotRequiredError
 )
 from pickyoptions.core.configuration.exceptions import (
     NotConfiguredError, ConfiguringError, ConfigurationError,
@@ -111,8 +112,11 @@ class OptionNotSetError(ValueNotSetError, OptionError):
     Raised when trying to access values or functionality on the `obj:Option`
     that require that the `obj:Option` was set.
     """
-    identifier = "Option Not Set"
     default_message = "The option {name} has not been set yet."
+
+
+class OptionSetError(ValueSetError, OptionError):
+    default_message = "The option {name} has already been set."
 
 
 class OptionDoesNotExistError(DoesNotExistError, OptionError):
@@ -147,8 +151,11 @@ class OptionRequiredError(ValueRequiredError, OptionError):
     """
     Raised when an option value is required but not specified.
     """
-    identifier = "Required Option"
     default_message = "The option {name} is required, but was not provided."
+
+
+class OptionNotRequiredError(ValueNotRequiredError, OptionError):
+    default_message = "The option {name} is not required."
 
 
 class OptionTypeError(ChildTypeError, OptionInvalidError):

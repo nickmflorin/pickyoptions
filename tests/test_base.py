@@ -1,5 +1,37 @@
+import pytest
+
 from pickyoptions.core.base import Base
 from pickyoptions.core.exceptions import PickyOptionsError
+
+
+def test_abstract_properties_inherit():
+    class TestGrandParent(Base):
+        __abstract__ = True
+        abstract_properties = ('foo', 'bar')
+
+    class TestParent(TestGrandParent):
+        __abstract__ = True
+        abstract_properties = ('fooey', 'barrey')
+
+    class TestChild(TestParent):
+        __abstract__ = False
+
+    assert TestChild.abstract_properties == ('foo', 'bar', 'fooey', 'barrey')
+
+    # We shouldn't be able to initialize an instance because it is missing
+    # required properties.
+    with pytest.raises(TypeError):
+        TestChild()
+
+    class TestChild(TestParent):
+        __abstract__ = False
+        foo = 'foo'
+        bar = 'bar'
+        fooey = 'fooey'
+        barrey = 'barrey'
+
+    # Now that required properties are present, we should be able to instantiate.
+    TestChild()
 
 
 def test_error_mappings_merge():

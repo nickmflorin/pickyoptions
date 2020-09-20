@@ -15,6 +15,7 @@ logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
 class ParentMixin(BaseMixin):
+    abstract_properties = ('child_cls', )
     errors = {
         'does_not_exist_error': ChildDoesNotExistError
     }
@@ -161,7 +162,6 @@ class ParentMixin(BaseMixin):
 
 class Parent(Base, ParentMixin):
     __abstract__ = True
-    abstract_properties = ('child_cls', )
 
     def __init__(self, children=None, child_value=None):
         super(Parent, self).__init__()

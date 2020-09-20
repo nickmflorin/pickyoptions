@@ -4,7 +4,7 @@ from pickyoptions import settings, constants
 
 from .configurable import ConfigurableParent
 from .configuration import Configuration
-from .exceptions import ConfigurationDoesNotExist
+from .exceptions import ConfigurationDoesNotExistError
 
 
 logger = logging.getLogger(settings.PACKAGE_NAME)
@@ -18,7 +18,7 @@ class Configurations(ConfigurableParent):
     child_cls = Configuration
 
     errors = {
-        'does_not_exist_error': ConfigurationDoesNotExist
+        'does_not_exist_error': ConfigurationDoesNotExistError
     }
 
     def __init__(self, *configurations, **kwargs):

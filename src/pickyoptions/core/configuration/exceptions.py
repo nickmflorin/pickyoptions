@@ -6,7 +6,9 @@ from pickyoptions.core.exceptions import (
     ValueTypeError,
     ValueInvalidError,
     ValueRequiredError,
-    ValueNullNotAllowedError
+    ValueNullNotAllowedError,
+    ValueSetError,
+    ValueNotRequiredError
 )
 
 
@@ -65,7 +67,7 @@ class ConfiguringError(ConfigurationError):
     default_message = "The configuration {name} is already configuring."
 
 
-class ConfigurationDoesNotExist(ChildDoesNotExistError, ConfigurationError):
+class ConfigurationDoesNotExistError(ChildDoesNotExistError, ConfigurationError):
     """
     Raised when a specific `obj:Configuration` is accessed in the
     `obj:Configurations` but the `obj:Configuration` does not exist in the
@@ -87,6 +89,16 @@ class ConfigurationNotSetError(ValueNotSetError, ConfigurationError):
     """
     default_message = (
         "The configuration {name} has not been set on on the instance yet."
+    )
+
+
+class ConfigurationSetError(ValueSetError, ConfigurationError):
+    """
+    Raised when the value for a specific `obj:Configuration` has already been
+    set but it is not expected to be set.
+    """
+    default_message = (
+        "The configuration {name} has already been set."
     )
 
 
@@ -120,7 +132,18 @@ class ConfigurationRequiredError(ValueRequiredError, ConfigurationError):
     to configure it with.
     """
     default_message = (
-        "The configuration {name} is required but was not provided.")
+        "The configuration {name} is required but was not provided."
+    )
+
+
+class ConfigurationNotRequiredError(ValueNotRequiredError, ConfigurationError):
+    """
+    Raised when a `obj:Configuration` is not required but we are expecting it
+    to be required.
+    """
+    default_message = (
+        "The configuration {name} is not required."
+    )
 
 
 class ConfigurationTypeError(ChildTypeError, ConfigurationInvalidError):

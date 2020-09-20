@@ -9,6 +9,8 @@ from .configuration import Configuration
 
 
 class CallableConfiguration(Configuration):
+    __abstract__ = False
+
     def __init__(self, field, num_arguments=None, error_message=None):
         super(CallableConfiguration, self).__init__(field, required=False,
             default=None)
@@ -49,6 +51,8 @@ class CallableConfiguration(Configuration):
 
 
 class TypesConfiguration(Configuration):
+    __abstract__ = False
+
     def __init__(self, field):
         super(TypesConfiguration, self).__init__(field, default=None)
 

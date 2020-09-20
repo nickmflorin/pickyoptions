@@ -15,9 +15,11 @@ from .exceptions import (
     NotConfiguredError,
     ConfiguringError,
     ConfigurationError,
-    ConfigurationDoesNotExist,
+    ConfigurationDoesNotExistError,
     ConfigurationValidationError,
     ConfigurationNullNotAllowedError,
+    ConfigurationSetError,
+    ConfigurationNotRequiredError
 )
 from .utils import require_configured_property, require_configured
 
@@ -59,7 +61,6 @@ class Configuration(ConfigurableChild):
 
         Default: False
 
-    # TODO: Currently not implemented.
     allow_null: `obj:bool` (optional)
         Whether or not the `obj:Configuration` is allowed to take on null values.
 
@@ -99,10 +100,12 @@ class Configuration(ConfigurableChild):
 
     errors = {
         # Child Implementation Errors
-        'does_not_exist_error': ConfigurationDoesNotExist,
+        'does_not_exist_error': ConfigurationDoesNotExistError,
         'not_set_error': ConfigurationNotSetError,
+        'set_error': ConfigurationSetError,
         'locked_error': ConfigurationLockedError,
         'required_error': ConfigurationRequiredError,
+        'not_required_error': ConfigurationNotRequiredError,
         'invalid_error': ConfigurationInvalidError,
         'invalid_type_error': ConfigurationTypeError,
         'not_null_error': ConfigurationNullNotAllowedError,
@@ -132,25 +135,11 @@ class Configuration(ConfigurableChild):
         self.save_initialization_state(**kwargs)
         super(Configuration, self).__init__(field, parent=parent, **kwargs)
 
-    def __repr__(self):
-        # The field might not be present yet if it is not initialized.
-        if self.initialized:
-            if self.set:
-                return super(Configuration, self).__repr__(
-                    field=self.field,
-                    value=self.value,
-                    state=self.configuration_state,
-                )
-            return super(Configuration, self).__repr__(
-                field=self.field,
-                state=self.configuration_state,
-            )
-        return super(Configuration, self).__repr__(state="NOT_INITIALIZED")
-
     def post_init(self, field, validation_error=None, parent=None, **kwargs):
         # Note: The configuration for the `obj:Configuration` is not lazy.
         # Note: The configuration validation will be called immediately after
         # the configuration finishes.
+        import ipdb; ipdb.set_trace()
         self.configure(**kwargs)
         self.assert_configured()
 
@@ -166,6 +155,21 @@ class Configuration(ConfigurableChild):
         self._types = kwargs.get('types', None)
         self._normalize = kwargs.get('normalize', None)
         self._validate = kwargs.get('validate', None)
+
+    def __repr__(self):
+        # The field might not be present yet if it is not initialized.
+        if self.initialized:
+            if self.set:
+                return super(Configuration, self).__repr__(
+                    field=self.field,
+                    value=self.value,
+                    state=self.configuration_state,
+                )
+            return super(Configuration, self).__repr__(
+                field=self.field,
+                state=self.configuration_state,
+            )
+        return super(Configuration, self).__repr__(state="NOT_INITIALIZED")
 
     @require_configured_property
     def types(self):

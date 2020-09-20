@@ -40,9 +40,6 @@ class Routine(Base):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type:
             self._state = RoutineState.ERROR
-            # Not sure if we want this?
-            print("THERE WAS AN ERROR - MAKE SURE NOT SWALLED")
-            six.reraise(exc_type, exc_val, exc_tb)
             return False
         self._state = RoutineState.FINISHED
         self.post_routine(self._instance)

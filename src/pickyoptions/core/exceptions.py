@@ -64,33 +64,34 @@ class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
     default_injection = {}
     ignore_prefix_injection = ('instance', )
 
+    # These properties are passed down from the parent to it's children.
+    child_configuration_properties = (
+        'parent',
+        'numbered_children',
+        'child_format',
+        'newline',
+        'bold_identifier',
+        'include_prefix',
+        'indent_children',
+    )
+
     def __init__(self, *args, **kwargs):
         super(PickyOptionsError, self).__init__()
 
-        # This is tough to do recursively because of the stipulation that other
-        # built in errors should be able to be nested.
+        # Here, we have to set properties specific to the `obj:PickyOptionsError`
+        # and not the children - otherwise, all of the children will be
+        # overwritten to conform to the parent value.
         self._children = kwargs.pop('children', [])
-
-        # TODO: Figure out how to do this for an infinite level of nesting.
-        self._indent_level = 0
-        for child in self.children:
-            child._indent_level = self._indent_level + 1
-            if isinstance(child, PickyOptionsError):
-                for grandchild in child.children:
-                    grandchild._indent_level = child._indent_level + 1
-
-        self._numbered_children = kwargs.pop('numbered_children', True)
-        self._indent_children = kwargs.pop('indent_children', "--> ")
-        self._child_format = kwargs.pop('child_format', None)
-        self._newline = kwargs.pop('newline', True)
-        self._bold_identifier = kwargs.pop('bold_identifier', True)
         self._detail = kwargs.pop('detail', None)
-        self._include_prefix = kwargs.pop('include_prefix', True)
+
+        # Here, we configure values for the parent `obj:PickyOptionsError` that
+        # we want the children instances to have as well.
+        self.configure_self_and_children(**kwargs)
 
         # Add in the injection arguments.
         self._injection = {}
         for k, v in kwargs.items():
-            if k != 'message':
+            if k != 'message' and k not in self.child_configuration_properties:
                 self._injection[k] = v
 
         self._identifier = kwargs.pop('identifier',
@@ -103,6 +104,32 @@ class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
             args[0] if len(args) != 0
             else kwargs.pop('message', self.default_message)
         )
+
+    def configure_self_and_children(self, **kwargs):
+        self._index = kwargs.pop('index', 0)
+        self._parent = kwargs.pop('parent', None)
+        self._numbered_children = kwargs.pop('numbered_children', True)
+        self._child_format = kwargs.pop('child_format', None)
+        self._newline = kwargs.pop('newline', True)
+        self._bold_identifier = kwargs.pop('bold_identifier', True)
+        self._include_prefix = kwargs.pop('include_prefix', True)
+        self._indent_prefix = kwargs.pop('indent_prefix', "--> ")
+
+        for i, child in enumerate(self.children):
+            if isinstance(child, PickyOptionsError):
+                child.configure_self_and_children(
+                    parent=self,
+                    index=i,
+                    child_format=self._child_format,
+                    include_prefix=self._include_prefix,
+                    newline=self._newline,
+                    bold_identifier=self._bold_identifier,
+                    indent_prefix=self._indent_prefix,
+                    numbered_children=self._numbered_children
+                )
+
+        # Must come after the children are configured.
+        self.indent(n=0)
 
     def __getattr__(self, k):
         if k in self._injection:
@@ -153,6 +180,50 @@ class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
         return new_cls
 
     @property
+    def parent(self):
+        return self._parent
+
+    @property
+    def include_prefix(self):
+        return self._include_prefix
+
+    @property
+    def newline(self):
+        return self._newline
+
+    @property
+    def indent_level(self):
+        return self._indent_level
+
+    @property
+    def indent_prefix(self):
+        return self._indent_prefix
+
+    def indent(self, n=1):
+        self._indent_level = n
+        for child in self.children:
+            if isinstance(child, PickyOptionsError):
+                child.indent(n=n + 1)
+            else:
+                # The error will not have any children so we don't have to
+                # worry about recursive nature.
+                child._indent_level = n + 1
+
+    @property
+    def indentation(self):
+        return "  " * self.indent_level
+
+    @property
+    def numbered_children(self):
+        return self._numbered_children
+
+    @property
+    def index(self):
+        if self.numbered_children:
+            return "(%s)" % (self._index + 1)
+        return ""
+
+    @property
     def injection(self):
         injection = {}
         prefix_injection = {}
@@ -171,36 +242,7 @@ class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
         return self._children
 
     def _has_injection_placeholder(self, argument):
-        return "{%s}" % argument in self.message
-
-    def _format_child(self, child, index):
-        assert isinstance(child, Exception)
-
-        # Set the child to not having a new line because we will handle the
-        # newline ourselves.
-        if isinstance(child, PickyOptionsError):
-            child._newline = False
-
-        formatted_child = "%s" % child
-        if self._child_format:
-            formatted_child = self._child_format(formatted_child)
-        if self._numbered_children:
-            formatted_child = "(%s) %s" % (index + 1, formatted_child)
-        if self._indent_children:
-            indentation = "    " * (child._indent_level)
-            return space_join(
-                indentation,
-                self._indent_children,
-                formatted_child
-            )
-        return formatted_child
-
-    @property
-    def _formatted_children(self):
-        return "\n".join([
-            self._format_child(child, i)
-            for i, child in enumerate(self._children)
-        ])
+        return "{%s}" % argument in self._message
 
     @property
     def identifier(self):
@@ -219,40 +261,53 @@ class PickyOptionsError(six.with_metaclass(PickyOptionsErrorMeta, Exception)):
 
     @property
     def message(self):
-        return self._message
+        injection, prefix_injection = self.injection
+        message = self._message.format(**injection)
+        if not message.endswith('.'):
+            message = "%s." % message
+        return message
 
     @property
-    def full_message(self):
+    def detail(self):
+        if self._detail is not None:
+            if (self._detail != "" and not self._detail.endswith('(')
+                    and not self._detail.startswith('(')):
+                return "(%s)" % self._detail
+        return self._detail
+
+    @property
+    def prefix(self):
         injection, prefix_injection = self.injection
-
-        full_message = self.message.format(**injection)
-        if not full_message.endswith('.'):
-            full_message = "%s." % full_message
-        assert full_message[0] != " "
-
-        detail = self._detail or ""
-        if (detail != "" and not detail.endswith('(')
-                and not detail.startswith('(')):
-            detail = "(%s)" % detail
-
-        prefix = ""
-        if self._include_prefix:
-            prefix = " ".join([
+        if self.include_prefix:
+            return " ".join([
                 "(%s=%s)" % (k, v)
                 for k, v in prefix_injection.items()
             ])
+        return None
 
-        full_message = space_join(
+    @property
+    def body(self):
+        return space_join(
             (self.identifier, "", ":"),
-            prefix,
-            full_message,
-            detail
+            self.prefix,
+            self.message,
+            self.detail
         )
-        if self._newline:
+
+    @property
+    def full_message(self):
+        if self.parent is None:
+            full_message = self.body
+        else:
+            full_message = space_join(
+                self.indentation,
+                self.indent_prefix,
+                self.index,
+                self.body
+            )
+        if self.newline:
             full_message = "\n%s" % full_message
-        if self._formatted_children:
-            return full_message + "\n" + self._formatted_children
-        return full_message
+        return full_message + "".join(["%s" % child for child in self.children])
 
     def __str__(self):
         return self.full_message
