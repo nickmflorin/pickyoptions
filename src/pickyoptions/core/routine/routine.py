@@ -9,7 +9,7 @@ from pickyoptions.core.decorators import raise_with_error
 from .constants import RoutineState
 from .exceptions import (
     RoutineNotFinishedError, RoutineInProgressError, RoutineNotInProgressError,
-    RoutineFinishedError)
+    RoutineFinishedError, RoutineError)
 from .utils import require_finished, require_not_in_progress
 
 
@@ -20,7 +20,7 @@ class Routine(Base):
     ___abstract__ = False
 
     def __init__(self, instance, id, pre_routine=None, post_routine=None,
-            on_queue_removal=None):
+            on_queue_removal=None, consecutive_runs=True):
         super(Routine, self).__init__()
         self._instance = instance
         self._id = id
@@ -30,8 +30,13 @@ class Routine(Base):
         self._pre_routine = pre_routine
         self._post_routine = post_routine
         self._on_queue_removal = on_queue_removal
+        self._consecutive_runs = consecutive_runs
 
     def __enter__(self):
+        # Prevent multiple runs of the same routine if it is not allowed.
+        if self.did_run and not self._consecutive_runs:
+            raise RoutineError("The routine %s has already been run." % self.id)
+
         assert len(self._queue) == 0
         self.pre_routine(self._instance)
         self._state = RoutineState.IN_PROGRESS

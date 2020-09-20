@@ -176,7 +176,8 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
         self.create_routine(
             id="populating",
             cls=OptionsRoutine,
-            post_routine=self.post_populate
+            post_routine=self.post_populate,
+            consecutive_runs=False,
         )
         self.create_routine(
             id="overriding",
@@ -189,12 +190,8 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
             post_routine=self.post_restore
         )
 
-    def post_init(self, *args, **kwargs):
-        # TODO: Now that post_init is slightly different, does the not poulated
-        # state still make sense here?  Should we have both a post init and
-        # a lazy post init method?  YES
+    def __postinit__(self, *args, **kwargs):
         self._state = OptionsState.NOT_POPULATED
-        super(Options, self).post_init(*args, **kwargs)
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -262,9 +259,16 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
 
     @property
     def overridden(self):
+        # Note: We have to use did_run here because the options can be overridden
+        # after they were already overridden, in which case the state will be
+        # IN_PROGRESS and then FINISHED.
         if self.routines.populating.did_run:
             assert self.state != OptionsState.POPULATED_NOT_OVERRIDDEN
         return self.routines.overriding.did_run
+
+    @property
+    def overriding(self):
+        return self.routines.overriding.in_progress
 
     def get_option(self, k):
         return self.get_child(k)
@@ -353,12 +357,14 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
         for k, _ in data.items():
             self.raise_if_child_missing(k)
 
+        # Note: We do not reset the overriding routine because it needs to track
+        # consecutively run overrides.
         with self.routines.overriding as routine:
             for k, v in data.items():
                 option = self.get_child(k)
                 option.override(v)
                 # Add the `obj:Option` to the queue of `obj:Option`(s) that were
-                # populated in a given routine, so we can track which options
+                # overridden in a given routine, so we can track which options
                 # need to be post validated and post processed with the most up
                 # to date `obj:Options` when the routine finishes.
                 routine.register(option, history=False)
@@ -413,7 +419,7 @@ class Options(ConfigurationsConfigurableParent, PopulatingMixin):
 
         # TODO: Should we maybe just check the number of options in the override
         # queue?
-        if not self.routines.overriding.finished:
+        if not self.overridden:
             logger.debug(
                 "Not restoring %s because the instance is not overridden."
                 % self.__class__.__name__)

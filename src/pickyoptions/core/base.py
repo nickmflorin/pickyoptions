@@ -57,7 +57,8 @@ def lazy(func):
     @functools.wraps(func)
     def inner(instance, *args, **kwargs):
         assert instance.initialized
-        instance.__lazyinit__()
+        if not instance.__lazyinitialized__:
+            instance.__lazyinit__()
         return func(instance, *args, **kwargs)
     return inner
 

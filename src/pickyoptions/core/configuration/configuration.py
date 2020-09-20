@@ -27,8 +27,6 @@ from .utils import require_configured_property, require_configured
 logger = logging.getLogger(settings.PACKAGE_NAME)
 
 
-# TODO: When the configuration values change, we need to trigger the validation
-# of the configuration (now that it is not maintained by the valued class).
 class Configuration(ConfigurableChild):
     """
     Represents a single configurable value in a set of `obj:Configurations`
@@ -117,37 +115,42 @@ class Configuration(ConfigurableChild):
         'validation_error': ConfigurationValidationError,
     }
 
-    # TODO: It might be useful to pass in the value on init in the future?
-    def __init__(self, field, parent=None, **kwargs):
-        # TODO: Implement a populated aspect of the Configuration to track when
-        # the value is provided.
+    def __init__(self, field, parent=None, errors=None, **kwargs):
+        """
+        Initializes the `obj:Configuration` instance with the provided field,
+        parent and configuration parameters.
+
+        TODO:
+        ----
+        - It might be useful in the future to pass a value directly into init
+          and have the `obj:Configuration` handle that.
+        - Implement properties for allowing/not allowing a blank string, empty
+          iterable, etc.
+        """
         self._value = constants.NOTSET
         self._defaulted = False
         self._set = False
 
-        # We should just let this basic configuration error be used, it will
-        # never be publically exposed?  But then it might be different from the
-        # configuration error that comes with validate_configuration...
-        # if validation_error is not None:
-        #     self.errors['validation_error'] = validation_error
+        super(Configuration, self).__init__(field, parent=parent, errors=errors,
+            **kwargs)
 
-        # I don't think we need this if we are not doing lazy initialization.
-        self.save_initialization_state(**kwargs)
-        super(Configuration, self).__init__(field, parent=parent, **kwargs)
+    def __postinit__(self, field, parent=None, **kwargs):
+        """
+        Configures the `obj:Configuration` after initialization is complete.
 
-    def post_init(self, field, validation_error=None, parent=None, **kwargs):
-        # Note: The configuration for the `obj:Configuration` is not lazy.
-        # Note: The configuration validation will be called immediately after
-        # the configuration finishes.
-        import ipdb; ipdb.set_trace()
+        The configuration of the `obj:Configuration` instance is not lazy,
+        and the configuration validation will be performed immediately after
+        the configuration finishes.  For this reason, simply initializing a
+        configuration causes code to run.
+        """
         self.configure(**kwargs)
         self.assert_configured()
 
     def _configure(self, **kwargs):
-        # TODO: It might be a little overkill to use a configuration method here,
-        # since we can just do this in __init__.
-        # TODO: Implement properties for allowing or not allowing blank string,
-        # properties for allowing/disallowing empty iterable, etc.
+        """
+        Configures the `obj:Configuration` instance with the provided
+        parameters.
+        """
         self._default = kwargs.get('default', constants.NOTSET)
         self._required = kwargs.get('required', False)
         self._allow_null = kwargs.get('allow_null', True)
@@ -450,9 +453,6 @@ class Configuration(ConfigurableChild):
                 detail=detail,
             )
 
-    # TODO: This raises a ConfigurationError with children
-    # InvalidConfigurationError(s), should we maybe instead raise a different
-    # parent error?  Either way, we should think about/simplify that.
     @accumulate_errors(error_cls='configuration_error', name='field')
     @require_configured
     def validate_configuration(self):
@@ -462,7 +462,7 @@ class Configuration(ConfigurableChild):
         This validation is independent of any value that would be set on the
         `obj:Configuration`, so it runs after initialiation and after the
         configuration values are changed, but not when the actual value on the
-        `obj:Configruation` changes.
+        `obj:Configuration` changes.
 
         TODO:
         ----

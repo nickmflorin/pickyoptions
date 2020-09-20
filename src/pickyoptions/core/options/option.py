@@ -219,7 +219,6 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
     def __init__(self, field, **kwargs):
         super(Option, self).__init__(field, **kwargs)
         self.save_initialization_state(**kwargs)
-        self._check = False
 
         self._value = constants.NOTSET
         self._defaulted = False
@@ -392,29 +391,38 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
             logger.debug("Overriding already set value.")
 
         # Perform the validation before setting the value on the instance.
+        # TODO: Do we want to only validate the value if the value is not EMPTY?
         self.do_validate(value=value)
 
-        # If the `obj:Configuration` is required, the default is None (since
+        # TODO: Double check this logic here.
+        # If the `obj:Option` is required, the default is None (since
         # _default is EMPTY).  This means that if the value equals the default,
         # the value is None which is now allowed for the required case - meaning,
         # this case only counts for the non-required case.
-        if not self.required and value == self.default:
+        if value == self.default:
+            # I don't think this assertion is okay, because the value might be
+            # explicitly provided as the default?  What about when it is required,
+            # the default is None?
+            assert not self.required  # Is this okay?
             logger.warning(
                 "Setting the value as %s when that is the default, "
                 "this will cause the configuration to be defaulted." % value
             )
-            # TODO: Implement an on default hook?
-            self._value = constants.EMPTY
             self._defaulted = True
+            self._value = constants.EMPTY
+        # The value will be EMPTY if and only if we are defaulting.
+        elif value == constants.EMPTY:
+            assert not self.required
+            self._defaulted = True
+            self._value = constants.EMPTY
         else:
+            self._defaulted = False
             self._value = value
 
-        # Triggers the post_set.
-        # Do we have to worry about whether or not the option is populating?
-        # With the way we are using post_init?
         self._set = True
 
         # TODO: We should only trigger this logic if the value has been changed.
+        # This requires keeping track of the previous value.
 
         # Note: We also have to check for cases where the default value is
         # explicitly provided!
@@ -442,14 +450,20 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
             self.do_post_process_with_options()
         self.do_validate_with_options()
 
-    def set_default(self):
-        # TODO: We should maybe lax this requirement, and figure out if it is
-        # truly necessary.
-        self.assert_not_set(message=(
-            "Cannot set the default when it has already been set."
-        ))
-        self._defaulted = True
+    def set_default(self, sender=None):
+        """
+        Sets the state of the `obj:Option` to it's configured default.
+        """
+        # When setting the default internally, we allow the default to be set
+        # when the `obj:Option` has already been set.
+        if not (sender and isinstance(sender, self.__class__)):
+            # TODO: We should consider laxing this requirement.
+            self.assert_not_set(message=(
+                "Cannot set the default when it has already been set."
+            ))
+        # The value of _defaulted is set in the value setter.
         self.value = constants.EMPTY
+        assert self.defaulted is True
 
     def do_normalize(self, value):
         assert value != constants.EMPTY and value != constants.NOTSET
@@ -459,14 +473,20 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
 
     @lazy
     def reset(self):
-        # Note that this gets called from the Options on population, so we dont
-        # need to call it ourselves.
+        """
+        Resets the `obj:Option` back to it's pre-populated state.
+
+        This occurs whenever the `obj:Option` is populated, but not when the
+        `obj:Option` is overridden or restored.
+        """
         self._value = constants.NOTSET
         self._defaulted = False
         self._set = False
+        self._history = []
 
         # If initialized, all of the routines we want to reset will be present.
         assert self.initialized
+
         # We cannot reset the configuration routine because then the option
         # will not be configured anymore.
         self.routines.subsection(
@@ -476,12 +496,15 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
     def overridden(self):
         return self.routines.overriding.finished
 
-    # Lazy init isn't needed here because it checks if it is populated first.
     @require_set
     def override(self, value):
+        """
+        Note that this does not trigger lazy initialization, since it requires
+        that the `obj:Option` was already set.
+        """
         # TODO: If the `obj:Option` is overridden with `None`, and the `default`
         # exists, should it revert to the default?  This needs to be tested.
-        # TODO: Should we move overriding logic to the Value itself?
+        # TODO: What to do if option is explicitly overridden with None.
         with self.routines.overriding as routine:
             routine.register(value)
             self.value = value
@@ -493,43 +516,58 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
         from .options import Options
         if not sender or not isinstance(sender, Options):
             self.reset()
+        # I don't think this assertion is okay, since it means that the default
+        # cannot be explicitly provided.
         assert value != self.default  # Is this okay?
         with self.routines.populating as routine:
             routine.register(value)
             self.value = value
 
-    # Lazy init isn't needed here because it checks if it is populated first.
     @require_set
     def restore(self):
+        """
+        Restores the `obj:Option` back to it's state immediately after it was
+        populated by wiping any applied overrides.
+
+        Note that this does not trigger lazy initialization, since it requires
+        that the `obj:Option` was already set.
+
+        Note that we cannot require that the `obj:Option` is populated, since
+        defaulted `obj:Option`(s) can be overridden, and thus should be
+        restored.
+        """
+        # If the `obj:Option` is not overridden, it is already in it's populated
+        # or originally defaulted state, so there is no need to restore.
+        if not self.overridden:
+            logger.debug(
+                "The option %s has not been overridden and thus cannot be "
+                "restored." % self.field
+            )
+
         with self.routines.restoring:
-            if self.defaulted:
-                assert len(self.routines.populating.history) == 0
+            # The populating history can still be 0 if the default was
+            # originally set when  populating but the default value was
+            # overridden - hence no populated value.
+            # To restore, we have to set back to it's default...
+            # TODO: There should be a better way of doing this, we should
+            # just keep track of the  value it was initially set to.
+            assert len(self.routines.populating.history) in (0, 1)
+            if len(self.routines.populating.history) == 0:
                 logger.debug(
-                    "Not restoring option %s because it is already in its "
-                    "default state." % self.identifier
+                    "The option %s was overridden but never populated - "
+                    "it's default value was used.  Restoring it's value "
+                    "back to that default." % self.field
                 )
+                assert not self.required
+                self.set_default(sender=self)
             else:
-                # The populating history can still be 0 if the default was
-                # originally set when  populating but the default value was
-                # overridden - hence no populated value.
-                # To restore, we have to set back to it's default...
-                # TODO: There should be a better way of doing this, we should
-                # just keep track of the  value it was initially set to.
-                assert len(self.routines.populating.history) in (0, 1)
-                if len(self.routines.populating.history) == 0:
-                    logger.debug(
-                        "The option %s was overridden but never populated - "
-                        "it's default value was used.  Restoring it's value "
-                        "back to that default." % self.identifier
-                    )
-                    assert not self.required
-                    configuration = self.configurations['default']
-                    self.value = configuration.value
-                else:
-                    self.value = self.routines.populating.history[0]
+                # Note: This is going to trigger redundant validation of the
+                # value, but that is not a big deal.
+                self.value = self.routines.populating.history[0]
 
     # We cannot require populated or populating because this will be applied
     # in some cases for defaulted options.
+    # Really?  We might want to rethink that.
     @require_set
     def do_post_process(self):
         """
@@ -553,6 +591,7 @@ class Option(ConfigurationsConfigurableChild, PopulatingMixin):
 
     # We cannot require populated or populating because this will be applied
     # in some cases for defaulted options.
+    # Really?  We might want to rethink that.
     @require_set
     def do_post_process_with_options(self):
         """

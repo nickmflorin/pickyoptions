@@ -28,6 +28,10 @@ def test_populate_options():
     assert options.width == 0.0
 
 
+def test_populate_options_twice():
+    pass
+
+
 def test_access_value_unpopulated():
     options = Options(
         Option('color', default='red'),
@@ -114,6 +118,28 @@ def test_restore_options():
     assert options.color == 'blue'
 
 
+def test_restore_options_default_overridden():
+    options = Options(
+        Option('color', default='red'),
+        Option('height', required=True, types=(int, float)),
+        Option('width', required=False, default=0.0, types=(int, float))
+    )
+    options.populate(height=2.0)
+    option = options.get_option('color')
+    assert option.defaulted
+
+    options.override(color='blue')
+    option = options.get_option('color')
+    assert not option.defaulted
+
+    options.override(color='red')
+    option = options.get_option('color')
+    assert option.defaulted
+
+    options.restore()
+    assert options.color == 'red'
+
+
 def test_restore_options_multiple_overrides():
     options = Options(
         Option('color', default='red'),
@@ -123,6 +149,9 @@ def test_restore_options_multiple_overrides():
     options.populate(color='blue', height=2.0)
 
     options.override(color='red')
+    option = options.get_option('color')
+    assert option.defaulted
+
     options.override(color='green', height=10.0)
     options.override(width=2.0)
 
